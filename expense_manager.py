@@ -99,54 +99,61 @@ class ExpenseManager:
             }
 
     def get_expenses(self, start_date=None, end_date=None, person=None):
-        """Retrieve expenses as a DataFrame."""
+        """Retrieve expenses with extreme robustness (String-based comparison)."""
         if not self._sheet: self._connect_to_sheets()
         
         required_cols = ["ID", "Ngày", "Giờ", "Người", "Danh mục", "Số tiền", "Mô tả", "Tháng", "Năm"]
         
         try:
-            data = self._sheet.get_all_records()
-            if not data:
+            # Using get_all_values() is more robust for manual header detection
+            rows = self._sheet.get_all_values()
+            if len(rows) <= 1:
                 return pd.DataFrame(columns=required_cols)
-                
-            df = pd.DataFrame(data)
             
-            # Ensure all required columns exist
+            # Use the first row as headers, and data from 2nd row
+            header = rows[0]
+            data = rows[1:]
+            df = pd.DataFrame(data, columns=header)
+            
+            # Ensure all required columns exist and are strings initially
             for col in required_cols:
                 if col not in df.columns:
-                    df[col] = None
+                    df[col] = ""
+                else:
+                    df[col] = df[col].astype(str)
 
             if df.empty:
                 return df
 
-            # Clean 'Số tiền' - remove currency and commas
-            df['Số tiền'] = df['Số tiền'].astype(str).str.replace(r'[^\d]', '', regex=True)
-            df['Số tiền'] = pd.to_numeric(df['Số tiền'], errors='coerce').fillna(0).astype(int)
+            # Clean 'Số tiền'
+            df['Số tiền_clean'] = df['Số tiền'].str.replace(r'[^\d]', '', regex=True)
+            df['Số tiền_num'] = pd.to_numeric(df['Số tiền_clean'], errors='coerce').fillna(0).astype(int)
 
-            # Robust date parsing
-            if 'Ngày' in df.columns:
-                # Convert 'Ngày' to datetime objects. ISO format (YYYY-MM-DD) or auto-detect.
-                df['Ngày_dt'] = pd.to_datetime(df['Ngày'], errors='coerce')
+            # --- ULTIMATE STRING-BASED FILTERING ---
+            # Standardize comparison: Always use YYYY-MM-DD strings
+            if start_date:
+                if isinstance(start_date, (datetime, date)):
+                    start_str = start_date.strftime("%Y-%m-%d")
+                else:
+                    start_str = str(start_date)[:10] 
+                df = df[df['Ngày'].astype(str) >= start_str]
                 
-                # Filter by comparing just the date part
-                if start_date:
-                    # Convert input start_date to a date object
-                    start_val = pd.to_datetime(start_date)
-                    if hasattr(start_val, 'date'): start_val = start_val.date()
-                    df = df[df['Ngày_dt'].dt.date >= start_val]
-                if end_date:
-                    # Convert input end_date to a date object
-                    end_val = pd.to_datetime(end_date)
-                    if hasattr(end_val, 'date'): end_val = end_val.date()
-                    df = df[df['Ngày_dt'].dt.date <= end_val]
+            if end_date:
+                if isinstance(end_date, (datetime, date)):
+                    end_str = end_date.strftime("%Y-%m-%d")
+                else:
+                    end_str = str(end_date)[:10]
+                df = df[df['Ngày'].astype(str) <= end_str]
             
-            if person and 'Người' in df.columns:
-                df = df[df['Người'] == person]
-                
+            if person:
+                df = df[df['Người'].astype(str).str.strip() == str(person).strip()]
+            
+            # Map back for the bot to use 'Số tiền' as the numeric one
+            df['Số tiền'] = df['Số tiền_num']
             return df
             
         except Exception as e:
-            logger.error(f"Error fetching data: {e}")
+            logger.error(f"FATAL Error fetching data: {e}")
             return pd.DataFrame(columns=required_cols)
 
     def delete_expense(self, expense_id):

@@ -111,12 +111,16 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def view_today(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """View today's expenses."""
     now = datetime.now(vn_tz)
-    # Use only date() for cleaner filtering
-    today_date = now.date()
-    df = expense_mgr.get_expenses(start_date=today_date, end_date=today_date)
+    today_str = now.strftime("%Y-%m-%d")
+    
+    # Passing string directly to ensure exact match
+    df = expense_mgr.get_expenses(start_date=today_str, end_date=today_str)
     
     if df.empty:
-        await update.message.reply_text("📅 Hôm nay bạn chưa chi tiêu gì.")
+        # Debug info to help identify why it's empty
+        debug_msg = f"📅 Hôm nay ({now.strftime('%d/%m/%Y')}) bạn chưa chi tiêu gì.\n\n"
+        debug_msg += f"_(Debug: Múi giờ hệ thống đang là {now.strftime('%H:%M')})_"
+        await update.message.reply_text(debug_msg, parse_mode='Markdown')
         return
         
     total = df['Số tiền'].sum()

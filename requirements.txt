@@ -1,0 +1,5 @@
+python-telegram-bot
+openpyxl
+pandas
+apscheduler
+matplotlib

@@ -62,8 +62,8 @@ class ExpenseManager:
         
         category = classify_expense(description)
         
-        # Format timestamps
-        day_str = date.strftime("%d/%m/%Y")
+        # Format timestamps correctly (Using ISO format YYYY-MM-DD is bulletproof)
+        day_str = date.strftime("%Y-%m-%d")
         time_str = date.strftime("%H:%M:%S")
         month = date.month
         year = date.year
@@ -71,7 +71,7 @@ class ExpenseManager:
 
         # Row data
         row = [
-            expense_id, day_str, time_str, person, category, amount, description, month, year
+            str(expense_id), day_str, time_str, person, category, amount, description, month, year
         ]
         
         try:
@@ -125,16 +125,20 @@ class ExpenseManager:
 
             # Robust date parsing
             if 'Ngày' in df.columns:
-                # Convert 'Ngày' to datetime objects while explicitly handling the dayfirst format
-                df['Ngày_dt'] = pd.to_datetime(df['Ngày'], dayfirst=True, errors='coerce')
+                # Convert 'Ngày' to datetime objects. ISO format (YYYY-MM-DD) or auto-detect.
+                df['Ngày_dt'] = pd.to_datetime(df['Ngày'], errors='coerce')
                 
-                # Filter by comparing just the date part to avoid time-of-day issues
+                # Filter by comparing just the date part
                 if start_date:
-                    start_ts = pd.to_datetime(start_date).date()
-                    df = df[df['Ngày_dt'].dt.date >= start_ts]
+                    # Convert input start_date to a date object
+                    start_val = pd.to_datetime(start_date)
+                    if hasattr(start_val, 'date'): start_val = start_val.date()
+                    df = df[df['Ngày_dt'].dt.date >= start_val]
                 if end_date:
-                    end_ts = pd.to_datetime(end_date).date()
-                    df = df[df['Ngày_dt'].dt.date <= end_ts]
+                    # Convert input end_date to a date object
+                    end_val = pd.to_datetime(end_date)
+                    if hasattr(end_val, 'date'): end_val = end_val.date()
+                    df = df[df['Ngày_dt'].dt.date <= end_val]
             
             if person and 'Người' in df.columns:
                 df = df[df['Người'] == person]

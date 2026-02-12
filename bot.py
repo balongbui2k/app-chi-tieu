@@ -1,6 +1,6 @@
 import logging
 import asyncio
-from datetime import datetime, timedelta, time
+from datetime import datetime, timedelta, time, date
 import re
 import matplotlib.pyplot as plt
 import io
@@ -111,8 +111,9 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def view_today(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """View today's expenses."""
     now = datetime.now(vn_tz)
-    start_of_day = datetime(now.year, now.month, now.day)
-    df = expense_mgr.get_expenses(start_date=start_of_day, end_date=now)
+    # Use only date() for cleaner filtering
+    today_date = now.date()
+    df = expense_mgr.get_expenses(start_date=today_date, end_date=today_date)
     
     if df.empty:
         await update.message.reply_text("📅 Hôm nay bạn chưa chi tiêu gì.")

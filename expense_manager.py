@@ -102,29 +102,33 @@ class ExpenseManager:
         """Retrieve expenses as a DataFrame."""
         if not self._sheet: self._connect_to_sheets()
         
+        required_cols = ["ID", "Ngày", "Giờ", "Người", "Danh mục", "Số tiền", "Mô tả", "Tháng", "Năm"]
+        
         try:
             data = self._sheet.get_all_records()
             if not data:
-                return pd.DataFrame()
+                return pd.DataFrame(columns=required_cols)
                 
             df = pd.DataFrame(data)
             
+            # Ensure all required columns exist
+            for col in required_cols:
+                if col not in df.columns:
+                    df[col] = None
+
             if df.empty:
                 return df
 
             # Clean 'Số tiền' - remove currency and commas
-            if 'Số tiền' in df.columns:
-                df['Số tiền'] = df['Số tiền'].astype(str).str.replace(r'[^\d]', '', regex=True)
-                df['Số tiền'] = pd.to_numeric(df['Số tiền'], errors='coerce').fillna(0).astype(int)
+            df['Số tiền'] = df['Số tiền'].astype(str).str.replace(r'[^\d]', '', regex=True)
+            df['Số tiền'] = pd.to_numeric(df['Số tiền'], errors='coerce').fillna(0).astype(int)
 
             # Robust date parsing
             if 'Ngày' in df.columns:
-                # Try multiple formats or let pandas auto-detect
                 df['Ngày_dt'] = pd.to_datetime(df['Ngày'], dayfirst=True, errors='coerce')
                 
                 # Filter
                 if start_date:
-                    # Remove time for comparison if only date matters
                     df = df[df['Ngày_dt'] >= pd.to_datetime(start_date)]
                 if end_date:
                     df = df[df['Ngày_dt'] <= pd.to_datetime(end_date)]
@@ -136,7 +140,7 @@ class ExpenseManager:
             
         except Exception as e:
             logger.error(f"Error fetching data: {e}")
-            return pd.DataFrame()
+            return pd.DataFrame(columns=required_cols)
 
     def delete_expense(self, expense_id):
         """Delete an expense by ID."""

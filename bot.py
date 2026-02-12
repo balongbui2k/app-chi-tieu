@@ -41,7 +41,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "Gửi tin nhắn như: `100k cơm` hoặc `50 xăng`\n"
         "Ghi cho người khác: `100k cơm @vợ` hoặc `50k xăng @con`\n\n"
         "Các lệnh hỗ trợ:\n"
-        "/view - Xem chi tiêu hôm nay\n"
+        "/today - Xem chi tiêu hôm nay\n"
         "/week - Xem chi tiêu tuần này\n"
         "/month - Xem chi tiêu tháng này\n"
         "/stats - Biểu đồ chi tiêu\n"

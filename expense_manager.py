@@ -111,7 +111,9 @@ class ExpenseManager:
                 return pd.DataFrame(columns=required_cols)
             
             # Use the first row as headers, and data from 2nd row
-            header = rows[0]
+            # Use the first row as headers (and normalize them), and data from 2nd row onward
+            raw_header = rows[0]
+            header = [str(h).strip() for h in raw_header] # Normalize headers (strip spaces)
             data = rows[1:]
             df = pd.DataFrame(data, columns=header)
             
@@ -129,21 +131,33 @@ class ExpenseManager:
             df['Số tiền_clean'] = df['Số tiền'].str.replace(r'[^\d]', '', regex=True)
             df['Số tiền_num'] = pd.to_numeric(df['Số tiền_clean'], errors='coerce').fillna(0).astype(int)
 
-            # --- ULTIMATE STRING-BASED FILTERING ---
-            # Standardize comparison: Always use YYYY-MM-DD strings
+            # --- ULTIMATE ROBUST DATE FILTERING ---
+            # Even if the sheet has mixed formats (DD/MM/YYYY and YYYY-MM-DD), we convert to string YYYY-MM-DD
+            if 'Ngày' in df.columns:
+                def standardize(d):
+                    try:
+                        # pd.to_datetime is clever enough for most formats if we tell it dayfirst=True
+                        return pd.to_datetime(d, dayfirst=True, errors='coerce').strftime("%Y-%m-%d")
+                    except:
+                        return str(d)
+                
+                df['Ngày_match'] = df['Ngày'].apply(standardize)
+            else:
+                df['Ngày_match'] = ""
+
             if start_date:
                 if isinstance(start_date, (datetime, date)):
                     start_str = start_date.strftime("%Y-%m-%d")
                 else:
                     start_str = str(start_date)[:10] 
-                df = df[df['Ngày'].astype(str) >= start_str]
+                df = df[df['Ngày_match'] >= start_str]
                 
             if end_date:
                 if isinstance(end_date, (datetime, date)):
                     end_str = end_date.strftime("%Y-%m-%d")
                 else:
                     end_str = str(end_date)[:10]
-                df = df[df['Ngày'].astype(str) <= end_str]
+                df = df[df['Ngày_match'] <= end_str]
             
             if person:
                 df = df[df['Người'].astype(str).str.strip() == str(person).strip()]

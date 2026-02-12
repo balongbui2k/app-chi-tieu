@@ -162,10 +162,6 @@ class ExpenseManager:
         except Exception as e:
             logger.error(f"FATAL Error in get_expenses: {e}")
             return pd.DataFrame()
-            
-        except Exception as e:
-            logger.error(f"FATAL Error fetching data: {e}")
-            return pd.DataFrame(columns=required_cols)
 
     def delete_expense(self, expense_id):
         """Delete an expense by ID."""

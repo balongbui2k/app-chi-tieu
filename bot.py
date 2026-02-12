@@ -319,6 +319,27 @@ async def view_by_person(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     await update.message.reply_text(report, parse_mode='Markdown')
 
+@authorized_only
+async def debug_sheet(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Hidden command to diagnose sheet issues."""
+    try:
+        rows = expense_mgr._sheet.get_all_values()
+        if not rows:
+            await update.message.reply_text("Sheet trống rỗng.")
+            return
+            
+        header = rows[0]
+        sample = rows[1:3] if len(rows) > 1 else "Không có dữ liệu dòng 2+"
+        
+        msg = f"🔍 **Sheet Debug Info:**\n"
+        msg += f"• Tổng số dòng: {len(rows)}\n"
+        msg += f"• Headers: `{header}`\n"
+        msg += f"• Sample data: `{sample}`\n"
+        msg += f"• VN Time: `{datetime.now(vn_tz).strftime('%Y-%m-%d %H:%M:%S')}`\n"
+        
+        await update.message.reply_text(msg, parse_mode='Markdown')
+    except Exception as e:
+        await update.message.reply_text(f"Lỗi debug: {e}")
 
 async def send_monthly_report(context: ContextTypes.DEFAULT_TYPE):
     """Scheduled task to send monthly report."""

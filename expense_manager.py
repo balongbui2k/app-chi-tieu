@@ -1,7 +1,7 @@
 import gspread
 from oauth2client.service_account import ServiceAccountCredentials
 import pandas as pd
-from datetime import datetime
+from datetime import datetime, date
 import config
 from categories import classify_expense
 import logging

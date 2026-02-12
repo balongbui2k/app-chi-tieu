@@ -10,9 +10,11 @@ TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN", "YOUR_BOT_TOKEN_HERE")
 user_ids_env = os.getenv("AUTHORIZED_USER_IDS", "12345678")
 AUTHORIZED_USER_IDS = [int(uid.strip()) for uid in user_ids_env.split(",")]
 
-# Web App URL (Your Render URL)
+# Web App URL (Your Render URL) - NO TRAILING SLASH
 # Example: https://expense-bot.onrender.com
-WEB_APP_URL = os.getenv("WEB_APP_URL", "https://expense-bot.onrender.com")
+# Use os.getenv to get it from Render environment (RENDER_EXTERNAL_URL is set automatically by Render sometimes, but WEB_APP_URL is better)
+# Default fallback to example if not set
+WEB_APP_URL = os.getenv("WEB_APP_URL", "https://app-chi-tieu.onrender.com")
 
 # Data storage settings
 DATA_DIR = "data"

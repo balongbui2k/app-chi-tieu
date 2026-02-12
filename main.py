@@ -1,7 +1,7 @@
 from fastapi import FastAPI, Request
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
-from fastapi.responses import HTMLResponse
+from fastapi.responses import HTMLResponse, JSONResponse
 import uvicorn
 import asyncio
 import os
@@ -36,7 +36,6 @@ async def startup_event():
     global telegram_app
     
     # Initialize the bot application
-    # We reuse the logic from bot.py but need to adapt it slightly to run inside FastAPI
     telegram_app = ApplicationBuilder().token(config.TELEGRAM_BOT_TOKEN).build()
     
     # Register handlers from bot.py
@@ -60,24 +59,43 @@ async def startup_event():
     # General messages
     telegram_app.add_handler(MessageHandler(filters.TEXT & (~filters.COMMAND), bot.handle_message))
 
-    # Scheduler (if needed, but FastAPI prevents 'sleep' so we might need careful handling)
+    # Scheduler 
     if telegram_app.job_queue:
         from datetime import time
         telegram_app.job_queue.run_daily(bot.send_monthly_report_callback, time=time(hour=8, minute=0))
 
     await telegram_app.initialize()
     await telegram_app.start()
-    await telegram_app.updater.start_polling()
-    logger.info("Bot started via FastAPI startup event")
+
+    # Set Webhook
+    # IMPORTANT: Ensure WEB_APP_URL is set in Render Environment Variables
+    # Or use default, but default might be wrong if you didn't change it
+    webhook_url = f"{config.WEB_APP_URL}/webhook"
+    logger.info(f"Setting webhook to: {webhook_url}")
+    await telegram_app.bot.set_webhook(url=webhook_url)
+
+    logger.info("Bot started via FastAPI startup event (Webhook Mode)")
 
 @app.on_event("shutdown")
 async def shutdown_event():
     """Stop the bot on shutdown."""
     if telegram_app:
-        await telegram_app.updater.stop()
+        # await telegram_app.bot.delete_webhook() # Optional: keep webhook if sleeping
         await telegram_app.stop()
         await telegram_app.shutdown()
         logger.info("Bot stopped")
+
+@app.post("/webhook")
+async def telegram_webhook(request: Request):
+    """Handle incoming Telegram updates."""
+    try:
+        data = await request.json()
+        update = Update.de_json(data, telegram_app.bot)
+        await telegram_app.process_update(update)
+        return {"status": "ok"}
+    except Exception as e:
+        logger.error(f"Error handling webhook: {e}")
+        return JSONResponse(content={"error": str(e)}, status_code=500)
 
 @app.get("/", response_class=HTMLResponse)
 async def read_root(request: Request):

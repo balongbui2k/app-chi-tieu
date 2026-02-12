@@ -1,6 +1,6 @@
 import logging
 import asyncio
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, time
 import re
 import matplotlib.pyplot as plt
 import io
@@ -8,7 +8,8 @@ import os
 
 from telegram import Update, ReplyKeyboardMarkup, ReplyKeyboardRemove
 from telegram.ext import ApplicationBuilder, CommandHandler, MessageHandler, filters, ContextTypes
-from apscheduler.schedulers.asyncio import AsyncIOScheduler
+# Removed external AsyncIOScheduler to fix event loop error
+# from apscheduler.schedulers.asyncio import AsyncIOScheduler
 
 import config
 from expense_manager import ExpenseManager
@@ -307,12 +308,16 @@ async def view_by_person(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(report, parse_mode='Markdown')
 
 
-async def send_monthly_report(application):
+async def send_monthly_report(context: ContextTypes.DEFAULT_TYPE):
     """Scheduled task to send monthly report."""
+    now = datetime.now()
+    # Only run on the specific day (e.g., 5th of the month)
+    if now.day != config.REPORT_DAY:
+        return
+
     # This needs to be run for each authorized user
     for user_id in config.AUTHORIZED_USER_IDS:
         try:
-            now = datetime.now()
             # If it's the 5th, report for previous month if needed, or current month so far.
             # Usually, people want report of the PREVIOUS month on the 5th.
             last_month_date = now.replace(day=1) - timedelta(days=1)
@@ -327,7 +332,7 @@ async def send_monthly_report(application):
                 report += "━━━━━━━━━━━━━━━━━━━━━━━━\n"
                 report += f"💰 **TỔNG CHI: {summary['total']:,} {config.CURRENCY}**"
                 
-                await application.bot.send_message(chat_id=user_id, text=report, parse_mode='Markdown')
+                await context.bot.send_message(chat_id=user_id, text=report, parse_mode='Markdown')
         except Exception as e:
             logger.error(f"Error in monthly report: {e}")
 
@@ -353,10 +358,12 @@ def main():
     # General messages
     application.add_handler(MessageHandler(filters.TEXT & (~filters.COMMAND), handle_message))
 
-    # Scheduler for monthly report (Run on day config.REPORT_DAY at 08:00 AM)
-    scheduler = AsyncIOScheduler()
-    scheduler.add_job(send_monthly_report, 'cron', day=config.REPORT_DAY, hour=8, minute=0, args=[application])
-    scheduler.start()
+    # Scheduler for monthly report (Run daily at 08:00 AM, checks day inside function)
+    if application.job_queue:
+        # Time is in UTC by default. 08:00 UTC = 15:00 VN.
+        # If we want 08:00 VN (UTC+7), we should set UTC time to 01:00.
+        # But let's keep it simple at 08:00 system time (which is likely UTC on Render).
+        application.job_queue.run_daily(send_monthly_report, time=time(hour=8, minute=0))
 
     logger.info("Bot is running...")
     application.run_polling()

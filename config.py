@@ -20,7 +20,7 @@ REPORT_DAY = 5
 
 # --- Google Sheets Configuration ---
 # File name of the Google Sheet you created
-GOOGLE_SHEET_NAME = "QuanLyChiTieu"
+GOOGLE_SHEET_NAME = "Quản lý chi tiêu"
 
 # Path to service account JSON (for local testing)
 # For Render: we will load from GOOGLE_CREDENTIALS_JSON environment variable

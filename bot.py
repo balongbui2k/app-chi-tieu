@@ -113,7 +113,8 @@ async def view_today(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
         
     total = df['Số tiền'].sum()
-    report = "📅 **Chi tiêu hôm nay:**\n\n"
+    date_str = now.strftime("%d.%m.%Y")
+    report = f"📅 **Chi tiêu hôm nay ({date_str}):**\n\n"
     for _, row in df.iterrows():
         report += f"• {row['Số tiền']:,} {config.CURRENCY} - {row['Mô tả']}\n"
     report += f"\n💰 **Tổng cộng: {total:,} {config.CURRENCY}**"

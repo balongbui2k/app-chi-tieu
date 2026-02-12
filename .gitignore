@@ -29,3 +29,4 @@ Thumbs.db
 backup-*/
 
 /.env
+service_account.json

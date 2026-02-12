@@ -6,13 +6,12 @@ import matplotlib.pyplot as plt
 import io
 import os
 
-from telegram import Update, ReplyKeyboardMarkup, ReplyKeyboardRemove
+from telegram import Update, ReplyKeyboardRemove
 from telegram.ext import ApplicationBuilder, CommandHandler, MessageHandler, filters, ContextTypes
-import json
 
 import config
 from expense_manager import ExpenseManager
-from telegram import KeyboardButton, ReplyKeyboardMarkup, WebAppInfo
+from keep_alive import keep_alive  # Import keep_alive server
 
 # Enable logging
 logging.basicConfig(
@@ -53,16 +52,9 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "/person <tên> - Xem chi tiêu theo người\n"
         "/export - Tải file Excel\n"
         "/help - Xem lại hướng dẫn này"
-        "/help - Xem lại hướng dẫn này"
     )
-    
-    # Create keyboard with Web App button
-    keyboard = [
-        [KeyboardButton("💸 Mở Nhập Liệu Nhanh", web_app=WebAppInfo(url=config.WEB_APP_URL))],
-    ]
-    reply_markup = ReplyKeyboardMarkup(keyboard, resize_keyboard=True)
-    
-    await update.message.reply_text(help_text, parse_mode='Markdown', reply_markup=reply_markup)
+    # Remove Mini App button, restore default keyboard (none)
+    await update.message.reply_text(help_text, parse_mode='Markdown', reply_markup=ReplyKeyboardRemove())
 
 @authorized_only
 async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -108,32 +100,6 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     except Exception as e:
         logger.error(f"Error recording expense: {e}")
         await update.message.reply_text("❌ Có lỗi xảy ra khi lưu dữ liệu.")
-
-@authorized_only
-async def handle_web_app_data(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Handle data sent from Mini App."""
-    data = json.loads(update.message.web_app_data.data)
-    
-    amount = int(data['amount'])
-    category = data['category']
-    description = data['description']
-    person = data['person']
-    
-    try:
-        record = expense_mgr.add_expense(amount, description, category=category, person=person)
-        response = (
-            f"✅ **Đã ghi nhận từ Web App!**\n"
-            f"━━━━━━━━━━━━━━━━━━━━\n"
-            f"👤 Người: {record['Người']}\n"
-            f"💰 Số tiền: {amount:,} {config.CURRENCY}\n"
-            f"📂 Danh mục: {record['Danh mục']}\n"
-            f"📝 Mô tả: {description}\n"
-            f"📅 ID: `{record['ID']}`"
-        )
-        await update.message.reply_text(response, parse_mode='Markdown')
-    except Exception as e:
-        logger.error(f"Error recording web app expense: {e}")
-        await update.message.reply_text("❌ Có lỗi xảy ra khi lưu dữ liệu Web App.")
 
 @authorized_only
 async def view_today(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -345,15 +311,11 @@ async def view_by_person(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def send_monthly_report(context: ContextTypes.DEFAULT_TYPE):
     """Scheduled task to send monthly report."""
     now = datetime.now()
-    # Only run on the specific day (e.g., 5th of the month)
     if now.day != config.REPORT_DAY:
         return
 
-    # This needs to be run for each authorized user
     for user_id in config.AUTHORIZED_USER_IDS:
         try:
-            # If it's the 5th, report for previous month if needed, or current month so far.
-            # Usually, people want report of the PREVIOUS month on the 5th.
             last_month_date = now.replace(day=1) - timedelta(days=1)
             summary = expense_mgr.get_monthly_summary(month=last_month_date.month, year=last_month_date.year)
             
@@ -371,7 +333,9 @@ async def send_monthly_report(context: ContextTypes.DEFAULT_TYPE):
             logger.error(f"Error in monthly report: {e}")
 
 def main():
-    """Start the bot."""
+    """Start the bot with Polling and Keep-Alive Server."""
+    keep_alive()  # Start Flask server for Render
+    
     application = ApplicationBuilder().token(config.TELEGRAM_BOT_TOKEN).build()
 
     # Commands
@@ -392,31 +356,12 @@ def main():
     # General messages
     application.add_handler(MessageHandler(filters.TEXT & (~filters.COMMAND), handle_message))
 
-    # Scheduler for monthly report (Run daily at 08:00 AM, checks day inside function)
+    # Scheduler 
     if application.job_queue:
-        # Time is in UTC by default. 08:00 UTC = 15:00 VN.
-        # If we want 08:00 VN (UTC+7), we should set UTC time to 01:00.
-        # But let's keep it simple at 08:00 system time (which is likely UTC on Render).
         application.job_queue.run_daily(send_monthly_report, time=time(hour=8, minute=0))
 
-    logger.info("Bot is running...")
+    logger.info("Bot is running (Polling Mode)...")
     application.run_polling()
-
-async def send_monthly_report_callback(context: ContextTypes.DEFAULT_TYPE):
-    """Wrapper for scheduled task to match job_queue callback signature."""
-    await send_monthly_report(context)
-
-def main():
-    """Start the bot (Standalone mode - For local testing only)."""
-    # ... (existing main code if you want to keep it runnable standalone)
-    pass 
 
 if __name__ == '__main__':
-    # Only run this if executing bot.py directly
-    application = ApplicationBuilder().token(config.TELEGRAM_BOT_TOKEN).build()
-    
-    # Commands
-    application.add_handler(CommandHandler("start", start))
-    # ... (add other handlers)
-    
-    application.run_polling()
+    main()

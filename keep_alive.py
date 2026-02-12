@@ -5,7 +5,7 @@ app = Flask('')
 
 @app.route('/')
 def home():
-    return "Bot is alive!"
+    return "Mira dậy rồi ạ!"    
 
 @app.route('/health')
 def health():

@@ -27,3 +27,5 @@ Thumbs.db
 # Backups
 *.tar.gz
 backup-*/
+
+/.env

@@ -3,3 +3,7 @@ openpyxl
 pandas
 apscheduler
 matplotlib
+fastapi
+uvicorn
+jinja2
+python-multipart

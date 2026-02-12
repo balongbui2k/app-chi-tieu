@@ -8,11 +8,11 @@ import os
 
 from telegram import Update, ReplyKeyboardMarkup, ReplyKeyboardRemove
 from telegram.ext import ApplicationBuilder, CommandHandler, MessageHandler, filters, ContextTypes
-# Removed external AsyncIOScheduler to fix event loop error
-# from apscheduler.schedulers.asyncio import AsyncIOScheduler
+import json
 
 import config
 from expense_manager import ExpenseManager
+from telegram import KeyboardButton, ReplyKeyboardMarkup, WebAppInfo
 
 # Enable logging
 logging.basicConfig(
@@ -53,8 +53,16 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "/person <tên> - Xem chi tiêu theo người\n"
         "/export - Tải file Excel\n"
         "/help - Xem lại hướng dẫn này"
+        "/help - Xem lại hướng dẫn này"
     )
-    await update.message.reply_text(help_text, parse_mode='Markdown')
+    
+    # Create keyboard with Web App button
+    keyboard = [
+        [KeyboardButton("💸 Mở Nhập Liệu Nhanh", web_app=WebAppInfo(url=config.WEB_APP_URL))],
+    ]
+    reply_markup = ReplyKeyboardMarkup(keyboard, resize_keyboard=True)
+    
+    await update.message.reply_text(help_text, parse_mode='Markdown', reply_markup=reply_markup)
 
 @authorized_only
 async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -100,6 +108,32 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     except Exception as e:
         logger.error(f"Error recording expense: {e}")
         await update.message.reply_text("❌ Có lỗi xảy ra khi lưu dữ liệu.")
+
+@authorized_only
+async def handle_web_app_data(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Handle data sent from Mini App."""
+    data = json.loads(update.message.web_app_data.data)
+    
+    amount = int(data['amount'])
+    category = data['category']
+    description = data['description']
+    person = data['person']
+    
+    try:
+        record = expense_mgr.add_expense(amount, description, category=category, person=person)
+        response = (
+            f"✅ **Đã ghi nhận từ Web App!**\n"
+            f"━━━━━━━━━━━━━━━━━━━━\n"
+            f"👤 Người: {record['Người']}\n"
+            f"💰 Số tiền: {amount:,} {config.CURRENCY}\n"
+            f"📂 Danh mục: {record['Danh mục']}\n"
+            f"📝 Mô tả: {description}\n"
+            f"📅 ID: `{record['ID']}`"
+        )
+        await update.message.reply_text(response, parse_mode='Markdown')
+    except Exception as e:
+        logger.error(f"Error recording web app expense: {e}")
+        await update.message.reply_text("❌ Có lỗi xảy ra khi lưu dữ liệu Web App.")
 
 @authorized_only
 async def view_today(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -368,5 +402,21 @@ def main():
     logger.info("Bot is running...")
     application.run_polling()
 
+async def send_monthly_report_callback(context: ContextTypes.DEFAULT_TYPE):
+    """Wrapper for scheduled task to match job_queue callback signature."""
+    await send_monthly_report(context)
+
+def main():
+    """Start the bot (Standalone mode - For local testing only)."""
+    # ... (existing main code if you want to keep it runnable standalone)
+    pass 
+
 if __name__ == '__main__':
-    main()
+    # Only run this if executing bot.py directly
+    application = ApplicationBuilder().token(config.TELEGRAM_BOT_TOKEN).build()
+    
+    # Commands
+    application.add_handler(CommandHandler("start", start))
+    # ... (add other handlers)
+    
+    application.run_polling()

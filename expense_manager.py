@@ -109,22 +109,27 @@ class ExpenseManager:
                 
             df = pd.DataFrame(data)
             
-            # Ensure columns exist even if empty
-            required_cols = ["ID", "Ngày", "Giờ", "Người", "Danh mục", "Số tiền", "Mô tả"]
-            for col in required_cols:
-                if col not in df.columns:
-                    return pd.DataFrame() # Malformed sheet
+            if df.empty:
+                return df
 
-            # Convert types
-            df['Số tiền'] = pd.to_numeric(df['Số tiền'], errors='coerce').fillna(0).astype(int)
-            df['Ngày_dt'] = pd.to_datetime(df['Ngày'], format='%d/%m/%Y', errors='coerce')
+            # Clean 'Số tiền' - remove currency and commas
+            if 'Số tiền' in df.columns:
+                df['Số tiền'] = df['Số tiền'].astype(str).str.replace(r'[^\d]', '', regex=True)
+                df['Số tiền'] = pd.to_numeric(df['Số tiền'], errors='coerce').fillna(0).astype(int)
 
-            # Filter
-            if start_date:
-                df = df[df['Ngày_dt'] >= start_date]
-            if end_date:
-                df = df[df['Ngày_dt'] <= end_date]
-            if person:
+            # Robust date parsing
+            if 'Ngày' in df.columns:
+                # Try multiple formats or let pandas auto-detect
+                df['Ngày_dt'] = pd.to_datetime(df['Ngày'], dayfirst=True, errors='coerce')
+                
+                # Filter
+                if start_date:
+                    # Remove time for comparison if only date matters
+                    df = df[df['Ngày_dt'] >= pd.to_datetime(start_date)]
+                if end_date:
+                    df = df[df['Ngày_dt'] <= pd.to_datetime(end_date)]
+            
+            if person and 'Người' in df.columns:
                 df = df[df['Người'] == person]
                 
             return df

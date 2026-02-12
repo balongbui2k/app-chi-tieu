@@ -333,11 +333,29 @@ async def send_monthly_report(context: ContextTypes.DEFAULT_TYPE):
         except Exception as e:
             logger.error(f"Error in monthly report: {e}")
 
+async def post_init(application):
+    """Set up the bot's commands menu."""
+    commands = [
+        ("start", "Bắt đầu sử dụng bot"),
+        ("help", "Xem hướng dẫn"),
+        ("today", "Xem chi tiêu hôm nay"),
+        ("week", "Xem chi tiêu tuần này"),
+        ("month", "Xem chi tiêu tháng này"),
+        ("stats", "Xem biểu đồ thống kê"),
+        ("recent", "Xem 10 giao dịch gần nhất"),
+        ("search", "Tìm kiếm chi tiêu theo từ khóa"),
+        ("person", "Xem chi tiêu theo người (vợ, con...)"),
+        ("edit", "Sửa chi tiêu (ID Tiền Mô tả)"),
+        ("delete", "Xóa chi tiêu (ID)"),
+        ("export", "Xuất file Excel"),
+    ]
+    await application.bot.set_my_commands(commands)
+
 def main():
     """Start the bot with Polling and Keep-Alive Server."""
     keep_alive()  # Start Flask server for Render
     
-    application = ApplicationBuilder().token(config.TELEGRAM_BOT_TOKEN).build()
+    application = ApplicationBuilder().token(config.TELEGRAM_BOT_TOKEN).post_init(post_init).build()
 
     # Commands
     application.add_handler(CommandHandler("start", start))

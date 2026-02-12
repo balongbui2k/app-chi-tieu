@@ -4,3 +4,5 @@ pandas
 apscheduler
 matplotlib
 flask
+gspread
+oauth2client

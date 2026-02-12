@@ -99,72 +99,69 @@ class ExpenseManager:
             }
 
     def get_expenses(self, start_date=None, end_date=None, person=None):
-        """Retrieve expenses with extreme robustness (String-based comparison)."""
+        """Retrieve expenses with dynamic column detection and extreme robustness."""
         if not self._sheet: self._connect_to_sheets()
         
-        required_cols = ["ID", "Ngày", "Giờ", "Người", "Danh mục", "Số tiền", "Mô tả", "Tháng", "Năm"]
-        
         try:
-            # Using get_all_values() is more robust for manual header detection
             rows = self._sheet.get_all_values()
             if len(rows) <= 1:
-                return pd.DataFrame(columns=required_cols)
+                return pd.DataFrame()
             
-            # Use the first row as headers, and data from 2nd row
-            # Use the first row as headers (and normalize them), and data from 2nd row onward
-            raw_header = rows[0]
-            header = [str(h).strip() for h in raw_header] # Normalize headers (strip spaces)
+            # Normalize headers
+            raw_header = [str(h).strip() for h in rows[0]]
             data = rows[1:]
-            df = pd.DataFrame(data, columns=header)
             
-            # Ensure all required columns exist and are strings initially
-            for col in required_cols:
-                if col not in df.columns:
-                    df[col] = ""
-                else:
-                    df[col] = df[col].astype(str)
+            # Find index of "Ngày" column (case-insensitive)
+            col_map = {h.lower(): i for i, h in enumerate(raw_header)}
+            date_col = next((h for h in raw_header if h.lower() == "ngày"), "Ngày")
+            amt_col = next((h for h in raw_header if h.lower() == "số tiền"), "Số tiền")
+            person_col = next((h for h in raw_header if h.lower() == "người"), "Người")
+            desc_col = next((h for h in raw_header if h.lower() == "mô tả"), "Mô tả")
 
-            if df.empty:
-                return df
-
-            # Clean 'Số tiền'
-            df['Số tiền_clean'] = df['Số tiền'].str.replace(r'[^\d]', '', regex=True)
-            df['Số tiền_num'] = pd.to_numeric(df['Số tiền_clean'], errors='coerce').fillna(0).astype(int)
-
-            # --- ULTIMATE ROBUST DATE FILTERING ---
-            # Even if the sheet has mixed formats (DD/MM/YYYY and YYYY-MM-DD), we convert to string YYYY-MM-DD
-            if 'Ngày' in df.columns:
+            df = pd.DataFrame(data, columns=raw_header)
+            
+            # Standardization
+            if date_col in df.columns:
                 def standardize(d):
+                    if not d: return "0000-00-00"
                     try:
-                        # pd.to_datetime is clever enough for most formats if we tell it dayfirst=True
-                        return pd.to_datetime(d, dayfirst=True, errors='coerce').strftime("%Y-%m-%d")
+                        # Try parsing various formats
+                        dt = pd.to_datetime(d, dayfirst=True, errors='coerce')
+                        if pd.isna(dt): return str(d) # Keep as is if failed
+                        return dt.strftime("%Y-%m-%d")
                     except:
                         return str(d)
-                
-                df['Ngày_match'] = df['Ngày'].apply(standardize)
+                df['__match_date'] = df[date_col].apply(standardize)
             else:
-                df['Ngày_match'] = ""
+                df['__match_date'] = "0000-00-00"
 
+            # Filter logic
             if start_date:
-                if isinstance(start_date, (datetime, date)):
-                    start_str = start_date.strftime("%Y-%m-%d")
-                else:
-                    start_str = str(start_date)[:10] 
-                df = df[df['Ngày_match'] >= start_str]
-                
+                s_str = start_date.strftime("%Y-%m-%d") if isinstance(start_date, (date, datetime)) else str(start_date)[:10]
+                df = df[df['__match_date'] >= s_str]
             if end_date:
-                if isinstance(end_date, (datetime, date)):
-                    end_str = end_date.strftime("%Y-%m-%d")
-                else:
-                    end_str = str(end_date)[:10]
-                df = df[df['Ngày_match'] <= end_str]
+                e_str = end_date.strftime("%Y-%m-%d") if isinstance(end_date, (date, datetime)) else str(end_date)[:10]
+                df = df[df['__match_date'] <= e_str]
+
+            if person and person_col in df.columns:
+                df = df[df[person_col].astype(str).str.strip().str.lower() == str(person).strip().lower()]
+
+            # Clean amounts for numeric use
+            if amt_col in df.columns:
+                df['Số tiền'] = df[amt_col].astype(str).str.replace(r'[^\d]', '', regex=True)
+                df['Số tiền'] = pd.to_numeric(df['Số tiền'], errors='coerce').fillna(0).astype(int)
+            else:
+                df['Số tiền'] = 0
+
+            # Map important columns to standard names for the bot
+            if desc_col in df.columns: df['Mô tả'] = df[desc_col]
+            if date_col in df.columns: df['Ngày'] = df[date_col]
             
-            if person:
-                df = df[df['Người'].astype(str).str.strip() == str(person).strip()]
-            
-            # Map back for the bot to use 'Số tiền' as the numeric one
-            df['Số tiền'] = df['Số tiền_num']
             return df
+            
+        except Exception as e:
+            logger.error(f"FATAL Error in get_expenses: {e}")
+            return pd.DataFrame()
             
         except Exception as e:
             logger.error(f"FATAL Error fetching data: {e}")
@@ -214,43 +211,38 @@ class ExpenseManager:
             return False
 
     def get_monthly_summary(self, month=None, year=None, person=None):
-        """Get monthly stats."""
-        if not self._sheet: self._connect_to_sheets()
-        
+        """Get monthly stats using the robust get_expenses logic."""
         now = datetime.now()
         if month is None: month = now.month
         if year is None: year = now.year
         
-        try:
-            data = self._sheet.get_all_records()
-            if not data: return None
+        # Calculate date range for the month
+        start_date = date(year, month, 1)
+        if month == 12:
+            end_date = date(year + 1, 1, 1) - timedelta(days=1)
+        else:
+            end_date = date(year, month + 1, 1) - timedelta(days=1)
             
-            df = pd.DataFrame(data)
+        df = self.get_expenses(start_date=start_date, end_date=end_date, person=person)
+        
+        if df.empty: return None
+        
+        # We need "Danh mục" column. If missing, use "Other"
+        rows = self._sheet.get_all_values()
+        header = [str(h).strip().lower() for h in rows[0]]
+        cat_col = next((h for i, h in enumerate(rows[0]) if h.strip().lower() == "danh mục"), None)
+        
+        if cat_col and cat_col in df.columns:
+            summary = df.groupby(cat_col)['Số tiền'].sum().to_dict()
+        else:
+            summary = {"Khác": df['Số tiền'].sum()}
             
-            # Simple conversion for filtering
-            df['Tháng'] = pd.to_numeric(df['Tháng'], errors='coerce')
-            df['Năm'] = pd.to_numeric(df['Năm'], errors='coerce')
-            df['Số tiền'] = pd.to_numeric(df['Số tiền'], errors='coerce').fillna(0)
-            
-            # Filter
-            mask = (df['Tháng'] == month) & (df['Năm'] == year)
-            if person:
-                mask = mask & (df['Người'] == person)
-                
-            filtered = df[mask]
-            
-            if filtered.empty: return None
-            
-            summary = filtered.groupby('Danh mục')['Số tiền'].sum().to_dict()
-            total = sum(summary.values())
-            
-            return {
-                "categories": summary,
-                "total": int(total),
-                "month": month,
-                "year": year,
-                "person": person
-            }
-        except Exception as e:
-            logger.error(f"Error summarizing: {e}")
-            return None
+        total = sum(summary.values())
+        
+        return {
+            "categories": summary,
+            "total": int(total),
+            "month": month,
+            "year": year,
+            "person": person
+        }

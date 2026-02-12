@@ -382,6 +382,7 @@ def main():
     application.add_handler(CommandHandler("edit", edit_item))
     application.add_handler(CommandHandler("search", search_items))
     application.add_handler(CommandHandler("person", view_by_person))
+    application.add_handler(CommandHandler("debug_sheet", debug_sheet))
 
     # General messages
     application.add_handler(MessageHandler(filters.TEXT & (~filters.COMMAND), handle_message))

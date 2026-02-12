@@ -17,7 +17,7 @@ WEB_APP_URL = os.getenv("WEB_APP_URL", "")
 DATA_DIR = "data"
 
 # Currency symbol
-CURRENCY = "đ"
+CURRENCY = "vnd"
 
 # Monthly report day
 REPORT_DAY = 5

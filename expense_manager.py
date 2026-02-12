@@ -125,13 +125,16 @@ class ExpenseManager:
 
             # Robust date parsing
             if 'Ngày' in df.columns:
+                # Convert 'Ngày' to datetime objects while explicitly handling the dayfirst format
                 df['Ngày_dt'] = pd.to_datetime(df['Ngày'], dayfirst=True, errors='coerce')
                 
-                # Filter
+                # Filter by comparing just the date part to avoid time-of-day issues
                 if start_date:
-                    df = df[df['Ngày_dt'] >= pd.to_datetime(start_date)]
+                    start_ts = pd.to_datetime(start_date).date()
+                    df = df[df['Ngày_dt'].dt.date >= start_ts]
                 if end_date:
-                    df = df[df['Ngày_dt'] <= pd.to_datetime(end_date)]
+                    end_ts = pd.to_datetime(end_date).date()
+                    df = df[df['Ngày_dt'].dt.date <= end_ts]
             
             if person and 'Người' in df.columns:
                 df = df[df['Người'] == person]

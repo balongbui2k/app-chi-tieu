@@ -5,6 +5,10 @@ import re
 import matplotlib.pyplot as plt
 import io
 import os
+import pytz
+
+# Config Vietnam Timezone
+vn_tz = pytz.timezone('Asia/Ho_Chi_Minh')
 
 from telegram import Update, ReplyKeyboardRemove
 from telegram.ext import ApplicationBuilder, CommandHandler, MessageHandler, filters, ContextTypes
@@ -86,7 +90,9 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         amount *= 1000000
         
     try:
-        record = expense_mgr.add_expense(amount, description, person=person)
+        # Add expense with Vietnam time
+        now = datetime.now(vn_tz)
+        record = expense_mgr.add_expense(amount, description, person=person, date=now)
         response = (
             f"✅ **Đã ghi nhận!**\n"
             f"━━━━━━━━━━━━━━━━━━━━\n"
@@ -104,7 +110,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
 @authorized_only
 async def view_today(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """View today's expenses."""
-    now = datetime.now()
+    now = datetime.now(vn_tz)
     start_of_day = datetime(now.year, now.month, now.day)
     df = expense_mgr.get_expenses(start_date=start_of_day, end_date=now)
     
@@ -123,7 +129,7 @@ async def view_today(update: Update, context: ContextTypes.DEFAULT_TYPE):
 @authorized_only
 async def view_week(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """View this week's expenses."""
-    now = datetime.now()
+    now = datetime.now(vn_tz)
     start_of_week = now - timedelta(days=now.weekday())
     start_of_week = datetime(start_of_week.year, start_of_week.month, start_of_week.day)
     df = expense_mgr.get_expenses(start_date=start_of_week, end_date=now)

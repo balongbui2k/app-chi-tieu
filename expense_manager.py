@@ -140,11 +140,14 @@ class ExpenseManager:
                 if not d or str(d).strip() == "": return pd.NaT # Use NaT for missing/invalid dates
                 try:
                     d_str = str(d).strip()
-                    # Try to parse with multiple formats, prioritizing YYYY-MM-DD, then DD/MM/YYYY
+                    # Try to parse with multiple formats
                     dt = pd.to_datetime(d_str, errors='coerce', format='%Y-%m-%d')
                     if pd.isna(dt):
-                        dt = pd.to_datetime(d_str, errors='coerce', dayfirst=True) # For DD/MM/YYYY
-                    return dt
+                        dt = pd.to_datetime(d_str, errors='coerce', dayfirst=True)
+                    
+                    if not pd.isna(dt):
+                        return dt.normalize() # Strip time component
+                    return pd.NaT
                 except:
                     return pd.NaT
 
@@ -164,6 +167,7 @@ class ExpenseManager:
                 else:
                     s_dt = pd.to_datetime(start_date, errors='coerce', dayfirst=True)
                 if not pd.isna(s_dt):
+                    s_dt = s_dt.normalize()
                     df = df[df['__match_date'] >= s_dt]
 
             if end_date:
@@ -172,6 +176,7 @@ class ExpenseManager:
                 else:
                     e_dt = pd.to_datetime(end_date, errors='coerce', dayfirst=True)
                 if not pd.isna(e_dt):
+                    e_dt = e_dt.normalize()
                     df = df[df['__match_date'] <= e_dt]
 
             if person and person_col and person_col in df.columns:

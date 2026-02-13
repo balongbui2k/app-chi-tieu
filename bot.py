@@ -136,9 +136,16 @@ async def view_today(update: Update, context: ContextTypes.DEFAULT_TYPE):
     df = expense_mgr.get_expenses(start_date=today_str, end_date=today_str)
     
     if df.empty:
+        # Check if it's really empty or filtering failed
+        all_df = expense_mgr.get_expenses()
+        debug_info = f" (Total records: {len(all_df)})"
+        if not all_df.empty and 'Ngày' in all_df.columns:
+            sample_dates = all_df['Ngày'].tail(3).tolist()
+            debug_info += f" | Sample dates in sheet: {sample_dates}"
+        
         # Debug info to help identify why it's empty
         debug_msg = f"📅 Hôm nay ({now.strftime('%d/%m/%Y')}) bạn chưa chi tiêu gì.\n\n"
-        debug_msg += f"_(Debug: Múi giờ hệ thống đang là {now.strftime('%H:%M')})_"
+        debug_msg += f"_(Debug: Giờ hệ thống: {now.strftime('%H:%M')} | {debug_info})_"
         await update.message.reply_text(debug_msg, parse_mode='Markdown')
         return
         

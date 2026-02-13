@@ -64,7 +64,6 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "/edit <id> <tiền> <mô tả> - Sửa\n"
         "/delete <id> - Xóa\n"
         "/person <tên> - Xem chi tiêu theo người\n"
-        "/export - Tải file Excel\n"
         "/help - Xem lại hướng dẫn này"
     )
     # Remove Mini App button, restore default keyboard (none)
@@ -96,19 +95,35 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     text = update.message.text.strip()
     
-    # Regex for "100k cơm" or "50 xăng" or "100k cơm @vợ"
-    # Matches: number + optional 'k'/'m' + description + optional @person
-    match = re.match(r'^(\d+)(k|m|K|M)?\s+(.+?)(?:\s+@(\w+))?$', text)
+    # Regex: number + optional 'k'/'m' + description + optional @person + optional #date
+    # Matches: "100k cơm", "50 xăng @vợ", "200 bỉm #hôm qua", "300 bỉm #12/02"
+    match = re.match(r'^(\d+)(k|m|K|M)?\s+(.+?)(?:\s+@(\w+))?(?:\s+#([\d/]+|hôm qua|hom qua))?$', text)
     
     if not match:
-        await update.message.reply_text("❓ Sai định dạng. Ví dụ đúng: `100k cơm` hoặc `50 xăng @vợ`", parse_mode='Markdown')
+        await update.message.reply_text("❓ Sai định dạng.\nVí dụ: `100k cơm`, `50 xăng @vợ`, `200 bỉm #hôm qua`, `300 bỉm #12/02`", parse_mode='Markdown')
         return
         
     amount_raw = match.group(1)
     suffix = match.group(2)
     description = match.group(3)
     person = match.group(4) if match.group(4) else "Bản thân"
-    
+    date_flag = match.group(5)
+
+    # Process date adjustment
+    record_date = datetime.now(vn_tz)
+    if date_flag:
+        date_flag = date_flag.lower()
+        if date_flag in ["hôm qua", "hom qua"]:
+            record_date -= timedelta(days=1)
+        elif "/" in date_flag:
+            try:
+                # Expecting dd/mm (uses current year)
+                day, month = map(int, date_flag.split("/"))
+                record_date = record_date.replace(day=day, month=month)
+            except:
+                await update.message.reply_text("❌ Ngày không hợp lệ (định dạng dd/mm).")
+                return
+
     amount = int(amount_raw)
     if suffix and suffix.lower() == 'k':
         amount *= 1000
@@ -117,21 +132,23 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         
     try:
         # Add expense with Vietnam time
-        now = datetime.now(vn_tz)
-        today_str = now.strftime("%Y-%m-%d")
+        now_vn = datetime.now(vn_tz)
+        today_str = now_vn.strftime("%Y-%m-%d")
+        record_date_str = record_date.strftime("%Y-%m-%d")
         
         # Reset cache if day changed
         if today_cache['date'] != today_str:
             today_cache['date'] = today_str
             today_cache['items'] = []
 
-        record = expense_mgr.add_expense(amount, description, person=person, date=now)
+        record = expense_mgr.add_expense(amount, description, person=person, date=record_date)
         
-        # Add to Telegram-only cache
-        today_cache['items'].append({'amount': amount, 'desc': description})
-        
-        # Calculate daily total from cache
-        daily_total = sum(item['amount'] for item in today_cache['items'])
+        # Only add to Telegram-only cache if it's actually for today
+        display_total = ""
+        if record_date_str == today_str:
+            today_cache['items'].append({'amount': amount, 'desc': description})
+            daily_total = sum(item['amount'] for item in today_cache['items'])
+            display_total = f"📊 **Tổng chi hôm nay: {daily_total:,} {config.CURRENCY}**\n"
 
         response = (
             f"✅ **Đã ghi nhận!**\n"
@@ -140,8 +157,9 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             f"💰 Số tiền: {amount:,} {config.CURRENCY}\n"
             f"📂 Danh mục: {record['Danh mục']}\n"
             f"📝 Mô tả: {description}\n"
+            f"📅 Ngày: {record['Ngày']}\n"
             f"━━━━━━━━━━━━━━━━━━━━\n"
-            f"📊 **Tổng chi hôm nay: {daily_total:,} {config.CURRENCY}**\n"
+            f"{display_total}"
             f"📅 ID: `{record['ID']}`"
         )
         await update.message.reply_text(response, parse_mode='Markdown')
@@ -240,16 +258,6 @@ async def stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     await update.message.reply_photo(photo=buf, caption=f"📊 Biểu đồ chi tiêu tháng {summary['month']}/{summary['year']}")
 
-@authorized_only
-async def export_excel(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Export current month's Excel file."""
-    now = datetime.now()
-    file_path = expense_mgr._get_file_path(now)
-    
-    if os.path.exists(file_path):
-        await update.message.reply_document(document=open(file_path, 'rb'), filename=os.path.basename(file_path))
-    else:
-        await update.message.reply_text("📂 Hiện tại chưa có file dữ liệu cho tháng này.")
 
 @authorized_only
 async def recent_expenses(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -410,6 +418,45 @@ async def send_monthly_report(context: ContextTypes.DEFAULT_TYPE):
         except Exception as e:
             logger.error(f"Error in monthly report: {e}")
 
+async def send_daily_summary(context: ContextTypes.DEFAULT_TYPE):
+    """Scheduled task to send daily summary at 23:00."""
+    now = datetime.now(vn_tz)
+    today_str = now.strftime("%Y-%m-%d")
+    
+    # Ensure cache is for today
+    if today_cache['date'] != today_str:
+        # This might happen if no messages were processed today
+        # We try to load from sheet to be accurate
+        df = expense_mgr.get_expenses(start_date=now, end_date=now)
+        if df.empty:
+            return # Don't push if nothing was spent
+        
+        items = []
+        for _, row in df.iterrows():
+            items.append({'amount': row['Số tiền'], 'desc': row['Mô tả']})
+    else:
+        items = today_cache['items']
+
+    if not items:
+        return # Skip if no expenses recorded today
+
+    total = sum(item['amount'] for item in items)
+    date_str = now.strftime("%d/%m/%Y")
+    
+    report = f"🌙 **TỔNG KẾT CHI TIÊU HÔM NAY ({date_str})**\n"
+    report += "━━━━━━━━━━━━━━━━━━━━━━━━\n"
+    for item in items:
+        report += f"• {item['amount']:,} đ - {item['desc']}\n"
+    report += "━━━━━━━━━━━━━━━━━━━━━━━━\n"
+    report += f"💰 **TỔNG CỘNG: {total:,} {config.CURRENCY}**\n\n"
+    report += "Chúc bạn ngủ ngon! 😴"
+
+    for user_id in config.AUTHORIZED_USER_IDS:
+        try:
+            await context.bot.send_message(chat_id=user_id, text=report, parse_mode='Markdown')
+        except Exception as e:
+            logger.error(f"Error sending daily summary to {user_id}: {e}")
+
 async def post_init(application):
     """Set up the bot's commands menu."""
     commands = [
@@ -424,7 +471,6 @@ async def post_init(application):
         ("person", "Xem chi tiêu theo người (vợ, con...)"),
         ("edit", "Sửa chi tiêu (ID Tiền Mô tả)"),
         ("delete", "Xóa chi tiêu (ID)"),
-        ("export", "Xuất file Excel"),
     ]
     await application.bot.set_my_commands(commands)
 
@@ -442,7 +488,6 @@ def main():
     application.add_handler(CommandHandler("week", view_week))
     application.add_handler(CommandHandler("month", view_month))
     application.add_handler(CommandHandler("stats", stats))
-    application.add_handler(CommandHandler("export", export_excel))
     application.add_handler(CommandHandler("recent", recent_expenses))
     application.add_handler(CommandHandler("delete", delete_item))
     application.add_handler(CommandHandler("edit", edit_item))
@@ -455,7 +500,10 @@ def main():
 
     # Scheduler 
     if application.job_queue:
-        application.job_queue.run_daily(send_monthly_report, time=time(hour=8, minute=0))
+        # Monthly report at 08:00
+        application.job_queue.run_daily(send_monthly_report, time=time(hour=8, minute=0, tzinfo=vn_tz))
+        # Daily EOD Summary at 23:00
+        application.job_queue.run_daily(send_daily_summary, time=time(hour=23, minute=0, tzinfo=vn_tz))
 
     logger.info("Bot is running (Polling Mode)...")
     application.run_polling()

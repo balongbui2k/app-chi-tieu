@@ -58,6 +58,7 @@ class ExpenseManager:
             if not self._client: self._connect_to_sheets()
             spreadsheet = self._client.open(config.GOOGLE_SHEET_NAME)
             
+        ws_name = self._get_worksheet_name(date_obj)
         try:
             worksheet = spreadsheet.worksheet(ws_name)
             # Check if header needs update (legacy 'Ngày' -> 'Ngày hôm nay')

@@ -141,12 +141,16 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             today_cache['date'] = today_str
             today_cache['items'] = []
 
+        record = expense_mgr.add_expense(amount, description, person=person, date=record_date)
+
         # Update Cache if it's actually for today
         display_balance = ""
         if record_date_str == today_str:
+            # Defensive check for category
+            cat_name = record.get('Danh mục', 'Khác')
             # Store with sign for simple sum
-            signed_amount = amount if record['Danh mục'] == "Thu nhập" else -amount
-            today_cache['items'].append({'amount': signed_amount, 'desc': description, 'cat': record['Danh mục']})
+            signed_amount = amount if cat_name == "Thu nhập" else -amount
+            today_cache['items'].append({'amount': signed_amount, 'desc': description, 'cat': cat_name})
             
             # Calculate daily stats
             today_income = sum(item['amount'] for item in today_cache['items'] if item['amount'] > 0)

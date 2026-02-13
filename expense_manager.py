@@ -105,8 +105,15 @@ class ExpenseManager:
         ]
         
         try:
-            # Use table_range='A1' to force appending from column A, even if there's data in K1
-            target_sheet.append_row(row, table_range='A1')
+            # We use append_row with table_range to ensure it only looks at columns A-G
+            # This prevents column K/L data from shifting the rows incorrectly.
+            # If table_range fails (older gspread), it will fallback to normal append_row.
+            try:
+                target_sheet.append_row(row, value_input_option='USER_ENTERED', table_range='A:G')
+            except TypeError:
+                # Fallback for older gspread versions
+                target_sheet.append_row(row, value_input_option='USER_ENTERED')
+            
             self._sheet = target_sheet # Update active sheet
             return {
                 "ID": expense_id,

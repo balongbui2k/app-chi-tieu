@@ -1,10 +1,11 @@
 import gspread
 from oauth2client.service_account import ServiceAccountCredentials
 import pandas as pd
-from datetime import datetime, date
+from datetime import datetime, date, timedelta
 import config
 from categories import classify_expense
 import logging
+import unicodedata
 
 logger = logging.getLogger(__name__)
 
@@ -107,33 +108,49 @@ class ExpenseManager:
             if len(rows) <= 1:
                 return pd.DataFrame()
             
-            # Normalize headers
+            # Normalize headers to NFC and lowercase for comparison
+            def normalize_str(s):
+                if not s: return ""
+                return unicodedata.normalize('NFC', str(s)).strip().lower()
+
             raw_header = [str(h).strip() for h in rows[0]]
+            normalized_header = [normalize_str(h) for h in raw_header]
             data = rows[1:]
+
+            # Map normalized headers to original ones
+            header_map = {normalize_str(h): h for h in raw_header}
             
-            # Find index of "Ngày" column (case-insensitive)
-            col_map = {h.lower(): i for i, h in enumerate(raw_header)}
-            date_col = next((h for h in raw_header if h.lower() == "ngày"), "Ngày")
-            amt_col = next((h for h in raw_header if h.lower() == "số tiền"), "Số tiền")
-            person_col = next((h for h in raw_header if h.lower() == "người"), "Người")
-            desc_col = next((h for h in raw_header if h.lower() == "mô tả"), "Mô tả")
+            # Find columns using normalized names
+            date_col = header_map.get("ngày") or next((h for h in raw_header if normalize_str(h) == "ngày"), "Ngày")
+            amt_col = header_map.get("số tiền") or next((h for h in raw_header if normalize_str(h) == "số tiền"), "Số tiền")
+            person_col = header_map.get("người") or next((h for h in raw_header if normalize_str(h) == "người"), "Người")
+            desc_col = header_map.get("mô tả") or next((h for h in raw_header if normalize_str(h) == "mô tả"), "Mô tả")
+            cat_col = header_map.get("danh mục") or next((h for h in raw_header if normalize_str(h) == "danh mục"), "Danh mục")
 
             df = pd.DataFrame(data, columns=raw_header)
             
+            def standardize(d):
+                if not d or str(d).strip() == "": return "0000-00-00"
+                try:
+                    # Strip whitespace and normalize
+                    d_str = str(d).strip()
+                    # Try parsing various formats. ISO first, then others.
+                    dt = pd.to_datetime(d_str, dayfirst=True, errors='coerce')
+                    if pd.isna(dt): 
+                        return d_str
+                    return dt.strftime("%Y-%m-%d")
+                except:
+                    return str(d).strip()
+
             # Standardization
             if date_col in df.columns:
-                def standardize(d):
-                    if not d: return "0000-00-00"
-                    try:
-                        # Try parsing various formats
-                        dt = pd.to_datetime(d, dayfirst=True, errors='coerce')
-                        if pd.isna(dt): return str(d) # Keep as is if failed
-                        return dt.strftime("%Y-%m-%d")
-                    except:
-                        return str(d)
                 df['__match_date'] = df[date_col].apply(standardize)
             else:
-                df['__match_date'] = "0000-00-00"
+                # Fallback: if 'ngày' col not found by name, try index 1 (standard)
+                if df.shape[1] > 1:
+                    df['__match_date'] = df.iloc[:, 1].apply(standardize)
+                else:
+                    df['__match_date'] = "0000-00-00"
 
             # Filter logic
             if start_date:
@@ -156,6 +173,7 @@ class ExpenseManager:
             # Map important columns to standard names for the bot
             if desc_col in df.columns: df['Mô tả'] = df[desc_col]
             if date_col in df.columns: df['Ngày'] = df[date_col]
+            if cat_col in df.columns: df['Danh mục'] = df[cat_col]
             
             return df
             

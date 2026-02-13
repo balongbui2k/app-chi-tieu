@@ -143,7 +143,14 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             today_cache['date'] = today_str
             today_cache['items'] = []
 
-        record = expense_mgr.add_expense(amount, description, person=person, date=record_date)
+        # Use update_id as a unique identifier to prevent double-processing across instances
+        record = expense_mgr.add_expense(amount, description, person=person, date=record_date, force_id=update.update_id)
+
+        # If this update was already processed (is_duplicate=True), we stop here
+        # to avoid double-summing in the cache and sending double replies.
+        if record.get('is_duplicate'):
+            logger.info(f"Deduplication triggered: Update {update.update_id} already in sheet. Ignoring.")
+            return
 
         # Update Cache if it's actually for today
         display_balance = ""

@@ -82,8 +82,8 @@ class ExpenseManager:
                 
         return worksheet
 
-    def add_expense(self, amount, description, person="Bản thân", date=None):
-        """Add a new expense record to Google Sheets."""
+    def add_expense(self, amount, description, person="Bản thân", date=None, force_id=None):
+        """Add a new expense record to Google Sheets with deduplication support."""
         if not self._sheet: self._connect_to_sheets()
         
         if date is None:
@@ -97,21 +97,41 @@ class ExpenseManager:
         # Format timestamps
         day_str = date.strftime("%Y-%m-%d")
         time_str = date.strftime("%H:%M:%S")
-        expense_id = int(datetime.timestamp(datetime.now()) * 1000)
+        
+        # Use provided ID (e.g. from Telegram update_id) or generate a new one
+        expense_id = str(force_id) if force_id else str(int(datetime.timestamp(datetime.now()) * 1000))
+
+        # IDEMPOTENCY CHECK: Check if this ID already exists in the sheet
+        try:
+            # We search only in the ID column (A) for efficiency
+            # To be safe, we check if the ID is already there
+            cell = target_sheet.find(expense_id, in_column=1)
+            if cell:
+                logger.info(f"Duplicate detected! ID {expense_id} already exists at row {cell.row}. Skipping write.")
+                # Retrieve existing row data to return it
+                row_data = target_sheet.row_values(cell.row)
+                return {
+                    "ID": str(expense_id),
+                    "Ngày": row_data[1] if len(row_data) > 1 else day_str,
+                    "Người": row_data[3] if len(row_data) > 3 else person,
+                    "Danh mục": row_data[4] if len(row_data) > 4 else category,
+                    "Số tiền": int(row_data[5]) if len(row_data) > 5 and str(row_data[5]).isdigit() else amount,
+                    "Mô tả": row_data[6] if len(row_data) > 6 else description,
+                    "is_duplicate": True
+                }
+        except:
+            pass # CellNotFound or other error, proceed to add
 
         # Row data (Removed month/year columns)
         row = [
-            str(expense_id), day_str, time_str, person, category, amount, description
+            expense_id, day_str, time_str, person, category, amount, description
         ]
         
         try:
             # We use append_row with table_range to ensure it only looks at columns A-G
-            # This prevents column K/L data from shifting the rows incorrectly.
-            # If table_range fails (older gspread), it will fallback to normal append_row.
             try:
                 target_sheet.append_row(row, value_input_option='USER_ENTERED', table_range='A:G')
             except TypeError:
-                # Fallback for older gspread versions
                 target_sheet.append_row(row, value_input_option='USER_ENTERED')
             
             self._sheet = target_sheet # Update active sheet
@@ -121,11 +141,11 @@ class ExpenseManager:
                 "Người": person,
                 "Danh mục": category,
                 "Số tiền": amount,
-                "Mô tả": description
+                "Mô tả": description,
+                "is_duplicate": False
             }
         except Exception as e:
             logger.error(f"Error adding row: {e}")
-            # Try reconnecting once
             self._connect_to_sheets()
             self._sheet.append_row(row)
             return {
@@ -134,7 +154,8 @@ class ExpenseManager:
                 "Người": person,
                 "Danh mục": category,
                 "Số tiền": amount,
-                "Mô tả": description
+                "Mô tả": description,
+                "is_duplicate": False
             }
 
     def get_expenses(self, start_date=None, end_date=None, person=None):

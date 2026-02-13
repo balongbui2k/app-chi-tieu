@@ -58,13 +58,16 @@ class ExpenseManager:
             if not self._client: self._connect_to_sheets()
             spreadsheet = self._client.open(config.GOOGLE_SHEET_NAME)
             
-        ws_name = self._get_worksheet_name(date_obj)
         try:
             worksheet = spreadsheet.worksheet(ws_name)
+            # Check if header needs update (legacy 'Ngày' -> 'Ngày hôm nay')
+            first_row = worksheet.row_values(1)
+            if len(first_row) > 1 and first_row[1] == "Ngày":
+                worksheet.update_cell(1, 2, "Ngày hôm nay")
         except gspread.exceptions.WorksheetNotFound:
             # Create new worksheet for the month
             worksheet = spreadsheet.add_worksheet(title=ws_name, rows="1000", cols="15")
-            # Headers (Using 'Ngày hôm nay' as requested, Removed H and I)
+            # Headers (Using 'Ngày hôm nay')
             worksheet.append_row(["ID", "Ngày hôm nay", "Giờ", "Người", "Danh mục", "Số tiền", "Mô tả"])
             
             # Add Total Summary formula in K1:L1
@@ -101,7 +104,8 @@ class ExpenseManager:
         ]
         
         try:
-            target_sheet.append_row(row)
+            # Use table_range='A1' to force appending from column A, even if there's data in K1
+            target_sheet.append_row(row, table_range='A1')
             self._sheet = target_sheet # Update active sheet
             return {
                 "ID": expense_id,

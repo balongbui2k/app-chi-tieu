@@ -152,32 +152,25 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             logger.info(f"Deduplication triggered: Update {update.update_id} already in sheet. Ignoring.")
             return
 
-        # Update Cache if it's actually for today
+        # Always fetch monthly summary for the recorded month to show "Tổng bù trừ"
+        summary = expense_mgr.get_monthly_summary(month=record_date.month, year=record_date.year)
+        
         display_balance = ""
-        if record_date_str == today_str:
-            # Defensive check for category
-            cat_name = record.get('Danh mục', 'Khác')
-            # Store with sign for simple sum
-            signed_amount = amount if cat_name == "Thu nhập" else -amount
-            today_cache['items'].append({'amount': signed_amount, 'desc': description, 'cat': cat_name})
-            
-            # Calculate daily stats
-            today_income = sum(item['amount'] for item in today_cache['items'] if item['amount'] > 0)
-            today_spent = abs(sum(item['amount'] for item in today_cache['items'] if item['amount'] < 0))
-            daily_net = today_income - today_spent
-            
+        if summary:
             display_balance = (
-                f"📊 **Hôm nay:**\n"
-                f"➕ Thu: {today_income:,}\n"
-                f"➖ Chi: {today_spent:,}\n"
-                f"💰 Còn: {daily_net:,} {config.CURRENCY}\n"
+                f"📊 **Tổng kết tháng {summary['month']}/{summary['year']}:**\n"
+                f"📈 Thu: {summary['income']:,} đ\n"
+                f"📉 Chi: {summary['total_spent']:,} đ\n"
+                f"💰 **Số dư: {summary['net']:,} {config.CURRENCY}**\n"
             )
 
+        sign = "➕" if record['Danh mục'] == "Thu nhập" else "➖"
+        
         response = (
             f"✅ **Đã ghi nhận!**\n"
             f"━━━━━━━━━━━━━━━━━━━━\n"
             f"👤 Người: {record['Người']}\n"
-            f"💰 Số tiền: {amount:,} {config.CURRENCY}\n"
+            f"💰 Số tiền: {sign} {amount:,} {config.CURRENCY}\n"
             f"📂 Danh mục: {record['Danh mục']}\n"
             f"📝 Mô tả: {description}\n"
             f"📅 Ngày: {record['Ngày']}\n"

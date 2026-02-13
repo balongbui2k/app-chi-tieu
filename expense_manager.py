@@ -38,16 +38,19 @@ class ExpenseManager:
             # Open the spreadsheet
             spreadsheet = self._client.open(config.GOOGLE_SHEET_NAME)
             
-            # Default to current month's sheet
+            # Default to current month's sheet immediately
             now = datetime.now()
             self._sheet = self._get_or_create_worksheet(now, spreadsheet)
+            
+            # (Optional) If the default 'Sheet1' still exists and is empty, we could delete it, 
+            # but usually it's safer to just leave it and work in the new monthly sheets.
                 
         except Exception as e:
             logger.error(f"Google Sheets Connection Error: {e}")
 
     def _get_worksheet_name(self, date_obj):
-        """Format worksheet name as 'Quản lý chi tiêu mm/yyyy'."""
-        return f"Quản lý chi tiêu {date_obj.strftime('%m/%Y')}"
+        """Format worksheet name as '[Spreadsheet Name] mm/yyyy'."""
+        return f"{config.GOOGLE_SHEET_NAME} {date_obj.strftime('%m/%Y')}"
 
     def _get_or_create_worksheet(self, date_obj, spreadsheet=None):
         """Get or create a worksheet for the given month."""
@@ -61,8 +64,8 @@ class ExpenseManager:
         except gspread.exceptions.WorksheetNotFound:
             # Create new worksheet for the month
             worksheet = spreadsheet.add_worksheet(title=ws_name, rows="1000", cols="15")
-            # Headers (Removed Month/Year columns H and I)
-            worksheet.append_row(["ID", "Ngày", "Giờ", "Người", "Danh mục", "Số tiền", "Mô tả"])
+            # Headers (Using 'Ngày hôm nay' as requested, Removed H and I)
+            worksheet.append_row(["ID", "Ngày hôm nay", "Giờ", "Người", "Danh mục", "Số tiền", "Mô tả"])
             
             # Add Total Summary formula in K1:L1
             try:
@@ -146,13 +149,14 @@ class ExpenseManager:
                     if curr.month == 12: curr = curr.replace(year=curr.year+1, month=1)
                     else: curr = curr.replace(month=curr.month+1)
             else:
-                # No specific range, try current month or all "Quản lý chi tiêu" sheets
+                # No specific range, try current month or all sheets matching the prefix in config
+                prefix = config.GOOGLE_SHEET_NAME
                 try:
                     target_worksheets.append(spreadsheet.worksheet(self._get_worksheet_name(datetime.now())))
                 except:
-                    # Fallback to all sheets starting with prefix
+                    # Fallback to all sheets starting with the config name
                     for ws in spreadsheet.worksheets():
-                        if ws.title.startswith("Quản lý chi tiêu"):
+                        if ws.title.startswith(prefix):
                             target_worksheets.append(ws)
 
             if not target_worksheets:
@@ -184,7 +188,7 @@ class ExpenseManager:
             
             # Find columns using normalized names
             # Prioritize exact match, then fallback to common variations
-            date_col = header_map.get("ngày") or header_map.get("date") or next((h for h in raw_header if normalize_str(h) == "ngày"), None)
+            date_col = header_map.get("ngày hôm nay") or header_map.get("ngày") or header_map.get("date") or next((h for h in raw_header if "ngày" in normalize_str(h)), None)
             amt_col = header_map.get("số tiền") or header_map.get("amount") or next((h for h in raw_header if normalize_str(h) == "số tiền"), None)
             person_col = header_map.get("người") or header_map.get("person") or next((h for h in raw_header if normalize_str(h) == "người"), None)
             desc_col = header_map.get("mô tả") or header_map.get("description") or next((h for h in raw_header if normalize_str(h) == "mô tả"), None)

@@ -28,6 +28,7 @@ expense_mgr = ExpenseManager()
 
 # Track processed updates to prevent duplicates
 processed_updates = set()
+update_lock = asyncio.Lock()
 
 # Cache for today's transactions to be independent of Google Sheets reading issues
 # Logic: Simple, Telegram-only, resets daily
@@ -80,11 +81,12 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not update.message or not update.message.text:
         return
 
-    # Check for duplicate updates
-    if update.update_id in processed_updates:
-        logger.info(f"Ignored duplicate update: {update.update_id}")
-        return
-    processed_updates.add(update.update_id)
+    # Check for duplicate updates (thread-safe)
+    async with update_lock:
+        if update.update_id in processed_updates:
+            logger.info(f"Ignored duplicate update: {update.update_id}")
+            return
+        processed_updates.add(update.update_id)
     
     # Keep the set size manageable (keep last 500 IDs)
     if len(processed_updates) > 500:
@@ -141,14 +143,35 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             today_cache['date'] = today_str
             today_cache['items'] = []
 
-        record = expense_mgr.add_expense(amount, description, person=person, date=record_date)
-        
-        # Only add to Telegram-only cache if it's actually for today
-        display_total = ""
+        # Use update_id as a unique identifier to prevent double-processing across instances
+        record = expense_mgr.add_expense(amount, description, person=person, date=record_date, force_id=update.update_id)
+
+        # If this update was already processed (is_duplicate=True), we stop here
+        # to avoid double-summing in the cache and sending double replies.
+        if record.get('is_duplicate'):
+            logger.info(f"Deduplication triggered: Update {update.update_id} already in sheet. Ignoring.")
+            return
+
+        # Update Cache if it's actually for today
+        display_balance = ""
         if record_date_str == today_str:
-            today_cache['items'].append({'amount': amount, 'desc': description})
-            daily_total = sum(item['amount'] for item in today_cache['items'])
-            display_total = f"📊 **Tổng chi hôm nay: {daily_total:,} {config.CURRENCY}**\n"
+            # Defensive check for category
+            cat_name = record.get('Danh mục', 'Khác')
+            # Store with sign for simple sum
+            signed_amount = amount if cat_name == "Thu nhập" else -amount
+            today_cache['items'].append({'amount': signed_amount, 'desc': description, 'cat': cat_name})
+            
+            # Calculate daily stats
+            today_income = sum(item['amount'] for item in today_cache['items'] if item['amount'] > 0)
+            today_spent = abs(sum(item['amount'] for item in today_cache['items'] if item['amount'] < 0))
+            daily_net = today_income - today_spent
+            
+            display_balance = (
+                f"📊 **Hôm nay:**\n"
+                f"➕ Thu: {today_income:,}\n"
+                f"➖ Chi: {today_spent:,}\n"
+                f"💰 Còn: {daily_net:,} {config.CURRENCY}\n"
+            )
 
         response = (
             f"✅ **Đã ghi nhận!**\n"
@@ -159,7 +182,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             f"📝 Mô tả: {description}\n"
             f"📅 Ngày: {record['Ngày']}\n"
             f"━━━━━━━━━━━━━━━━━━━━\n"
-            f"{display_total}"
+            f"{display_balance}"
             f"📅 ID: `{record['ID']}`"
         )
         await update.message.reply_text(response, parse_mode='Markdown')
@@ -186,12 +209,20 @@ async def view_today(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text(f"📅 Hôm nay ({now.strftime('%d/%m/%Y')}) bạn chưa chi tiêu gì.")
         return
         
-    total = sum(item['amount'] for item in items)
+    today_income = sum(item['amount'] for item in items if item['amount'] > 0)
+    today_spent = abs(sum(item['amount'] for item in items if item['amount'] < 0))
+    net = today_income - today_spent
+    
     date_str = now.strftime("%d/%m/%Y")
-    report = f"📅 **Chi tiêu hôm nay ({date_str}):**\n\n"
+    report = f"📅 **Tài chính hôm nay ({date_str}):**\n\n"
     for item in items:
-        report += f"• {item['amount']:,} đ - {item['desc']}\n"
-    report += f"\n💰 **Tổng cộng: {total:,} {config.CURRENCY}**"
+        sign = "➕" if item['amount'] > 0 else "➖"
+        report += f"{sign} {abs(item['amount']):,} đ - {item['desc']}\n"
+    
+    report += "━━━━━━━━━━━━━━━━━━━━\n"
+    report += f"➕ Tổng Thu: {today_income:,} đ\n"
+    report += f"➖ Tổng Chi: {today_spent:,} đ\n"
+    report += f"💰 **Số dư: {net:,} {config.CURRENCY}**"
     await update.message.reply_text(report, parse_mode='Markdown')
 
 @authorized_only
@@ -202,15 +233,23 @@ async def view_week(update: Update, context: ContextTypes.DEFAULT_TYPE):
     start_of_week = datetime(start_of_week.year, start_of_week.month, start_of_week.day)
     df = expense_mgr.get_expenses(start_date=start_of_week, end_date=now)
     
-    if df.empty:
-        await update.message.reply_text("📅 Tuần này bạn chưa chi tiêu gì.")
-        return
-        
-    total = df['Số tiền'].sum()
-    report = "📅 **Chi tiêu tuần này:**\n\n"
+    # Calculate Income vs Spent
+    income_df = df[df['Danh mục'] == "Thu nhập"]
+    spent_df = df[df['Danh mục'] != "Thu nhập"]
+    
+    total_income = income_df['Số tiền'].sum()
+    total_spent = spent_df['Số tiền'].sum()
+    net = total_income - total_spent
+
+    report = "📅 **Tài chính tuần này:**\n\n"
     for _, row in df.iterrows():
-        report += f"• {row['Ngày']} - {row['Số tiền']:,} đ: {row['Mô tả']}\n"
-    report += f"\n💰 **Tổng cộng: {total:,} {config.CURRENCY}**"
+        sign = "➕" if row['Danh mục'] == "Thu nhập" else "➖"
+        report += f"{sign} {row['Ngày']} - {row['Số tiền']:,} đ: {row['Mô tả']}\n"
+    
+    report += "━━━━━━━━━━━━━━━━━━━━\n"
+    report += f"➕ Tổng Thu: {total_income:,} đ\n"
+    report += f"➖ Tổng Chi: {total_spent:,} đ\n"
+    report += f"💰 **Số dư: {net:,} {config.CURRENCY}**"
     await update.message.reply_text(report, parse_mode='Markdown')
 
 
@@ -222,15 +261,20 @@ async def view_month(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("📅 Tháng này chưa có dữ liệu chi tiêu.")
         return
         
-    report = f"📊 **TỔNG HỢP CHI TIÊU THÁNG {summary['month']}/{summary['year']}**\n"
+    report = f"📊 **TÀI CHÍNH THÁNG {summary['month']}/{summary['year']}**\n"
     report += "━━━━━━━━━━━━━━━━━━━━━━━━\n"
     
+    report += f"📈 **Thu nhập:** {summary['income']:,} {config.CURRENCY}\n"
+    report += "📉 **Chi tiêu chi tiết:**\n"
+    
     for cat, amt in summary['categories'].items():
-        percent = (amt / summary['total']) * 100
+        if cat == "Thu nhập": continue
+        percent = (amt / summary['total_spent']) * 100 if summary['total_spent'] > 0 else 0
         report += f"• {cat}: {amt:,} {config.CURRENCY} ({percent:.1f}%)\n"
         
     report += "━━━━━━━━━━━━━━━━━━━━━━━━\n"
-    report += f"💰 **TỔNG: {summary['total']:,} {config.CURRENCY}**"
+    report += f"➖ Tổng chi: {summary['total_spent']:,} {config.CURRENCY}\n"
+    report += f"💰 **Số dư tháng: {summary['net']:,} {config.CURRENCY}**"
     
     await update.message.reply_text(report, parse_mode='Markdown')
 
@@ -440,15 +484,21 @@ async def send_daily_summary(context: ContextTypes.DEFAULT_TYPE):
     if not items:
         return # Skip if no expenses recorded today
 
-    total = sum(item['amount'] for item in items)
-    date_str = now.strftime("%d/%m/%Y")
+    # Calculate daily stats
+    income = sum(item['amount'] for item in items if item['amount'] > 0)
+    spent = abs(sum(item['amount'] for item in items if item['amount'] < 0))
+    net = income - spent
     
-    report = f"🌙 **TỔNG KẾT CHI TIÊU HÔM NAY ({date_str})**\n"
+    date_str = now.strftime("%d/%m/%Y")
+    report = f"🌙 **TỔNG KẾT TÀI CHÍNH HÔM NAY ({date_str})**\n"
     report += "━━━━━━━━━━━━━━━━━━━━━━━━\n"
     for item in items:
-        report += f"• {item['amount']:,} đ - {item['desc']}\n"
+        sign = "➕" if item['amount'] > 0 else "➖"
+        report += f"{sign} {abs(item['amount']):,} đ - {item['desc']}\n"
     report += "━━━━━━━━━━━━━━━━━━━━━━━━\n"
-    report += f"💰 **TỔNG CỘNG: {total:,} {config.CURRENCY}**\n\n"
+    report += f"➕ Tổng Thu: {income:,} đ\n"
+    report += f"➖ Tổng Chi: {spent:,} đ\n"
+    report += f"💰 **Số dư: {net:,} {config.CURRENCY}**\n\n"
     report += "Chúc bạn ngủ ngon! 😴"
 
     for user_id in config.AUTHORIZED_USER_IDS:

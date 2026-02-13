@@ -7,7 +7,8 @@ CATEGORIES = {
     "Giải trí": ["phim", "game", "netflix", "du lịch", "vé", "hát", "karaoke"],
     "Giáo dục": ["học phí", "sách", "vở", "khóa học", "bút"],
     "Sức khỏe": ["thuốc", "khám", "bệnh viện", "gym", "yoga"],
-    "Nhà cửa": ["tiền điện", "tiền nước", "internet", "vệ sinh", "thuê nhà", "rác"],
+    "Nhà cửa": ["tiền điện", "tiền nước", "internet", "vệ sinh", "thuê nhà", "rác", "tiền dịch vụ"],
+    "Thu nhập": ["lương", "thưởng", "thu nhập", "tiền về", "lãi", "đòi nợ", "quà"],
     "Khác": []  # Default category if no keywords match
 }
 

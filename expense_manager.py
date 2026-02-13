@@ -36,33 +36,44 @@ class ExpenseManager:
             self._client = gspread.authorize(creds)
             
             # Open the spreadsheet
-            try:
-                self._sheet = self._client.open(config.GOOGLE_SHEET_NAME).sheet1
-            except gspread.exceptions.SpreadsheetNotFound:
-                # If "Sheet1" or file not found, try creating it? 
-                # Better to just instruct user, but we can try to find first sheet
-                try:
-                    self._sheet = self._client.open(config.GOOGLE_SHEET_NAME).get_worksheet(0)
-                except Exception as e:
-                    logger.error(f"Could not open sheet '{config.GOOGLE_SHEET_NAME}': {e}")
-                    raise
-
-            # Initialize headers if empty
-            if not self._sheet.get_all_values():
-                self._sheet.append_row(["ID", "Ngày", "Giờ", "Người", "Danh mục", "Số tiền", "Mô tả", "Tháng", "Năm"])
+            spreadsheet = self._client.open(config.GOOGLE_SHEET_NAME)
             
-            # Ensure there's a total formula in cells K1:L1 for quick viewing
-            try:
-                # Only update if it's not already set to avoid API call spam
-                current_total_label = self._sheet.acell('K1').value
-                if current_total_label != "TỔNG CHI TIÊU:":
-                    self._sheet.update_acell('K1', 'TỔNG CHI TIÊU:')
-                    self._sheet.update_acell('L1', '=SUM(F2:F)')
-            except Exception as e:
-                logger.warning(f"Could not update total formula cell: {e}")
+            # Default to current month's sheet
+            now = datetime.now()
+            self._sheet = self._get_or_create_worksheet(now, spreadsheet)
                 
         except Exception as e:
             logger.error(f"Google Sheets Connection Error: {e}")
+
+    def _get_worksheet_name(self, date_obj):
+        """Format worksheet name as 'Quản lý chi tiêu mm/yyyy'."""
+        return f"Quản lý chi tiêu {date_obj.strftime('%m/%Y')}"
+
+    def _get_or_create_worksheet(self, date_obj, spreadsheet=None):
+        """Get or create a worksheet for the given month."""
+        if spreadsheet is None:
+            if not self._client: self._connect_to_sheets()
+            spreadsheet = self._client.open(config.GOOGLE_SHEET_NAME)
+            
+        ws_name = self._get_worksheet_name(date_obj)
+        try:
+            worksheet = spreadsheet.worksheet(ws_name)
+        except gspread.exceptions.WorksheetNotFound:
+            # Create new worksheet for the month
+            worksheet = spreadsheet.add_worksheet(title=ws_name, rows="1000", cols="15")
+            # Headers (Removed Month/Year columns H and I)
+            worksheet.append_row(["ID", "Ngày", "Giờ", "Người", "Danh mục", "Số tiền", "Mô tả"])
+            
+            # Add Total Summary formula in K1:L1
+            try:
+                worksheet.update_acell('K1', 'TỔNG CHI TIÊU:')
+                worksheet.update_acell('L1', '=SUM(F2:F)')
+                # Basic formatting for the header
+                worksheet.format("A1:G1", {"textFormat": {"bold": True}, "backgroundColor": {"red": 0.9, "green": 0.9, "blue": 0.9}})
+            except Exception as e:
+                logger.warning(f"Could not format sheet: {e}")
+                
+        return worksheet
 
     def add_expense(self, amount, description, person="Bản thân", date=None):
         """Add a new expense record to Google Sheets."""
@@ -71,22 +82,24 @@ class ExpenseManager:
         if date is None:
             date = datetime.now()
         
+        # Ensure we are using the correct sheet for this month
+        target_sheet = self._get_or_create_worksheet(date)
+        
         category = classify_expense(description)
         
-        # Format timestamps correctly (Using ISO format YYYY-MM-DD is bulletproof)
+        # Format timestamps
         day_str = date.strftime("%Y-%m-%d")
         time_str = date.strftime("%H:%M:%S")
-        month = date.month
-        year = date.year
         expense_id = int(datetime.timestamp(datetime.now()) * 1000)
 
-        # Row data
+        # Row data (Removed month/year columns)
         row = [
-            str(expense_id), day_str, time_str, person, category, amount, description, month, year
+            str(expense_id), day_str, time_str, person, category, amount, description
         ]
         
         try:
-            self._sheet.append_row(row)
+            target_sheet.append_row(row)
+            self._sheet = target_sheet # Update active sheet
             return {
                 "ID": expense_id,
                 "Ngày": day_str,
@@ -110,13 +123,52 @@ class ExpenseManager:
             }
 
     def get_expenses(self, start_date=None, end_date=None, person=None):
-        """Retrieve expenses with dynamic column detection and extreme robustness."""
-        if not self._sheet: self._connect_to_sheets()
+        """Retrieve expenses across monthly worksheets."""
+        if not self._client: self._connect_to_sheets()
         
         try:
-            rows = self._sheet.get_all_values()
-            if len(rows) <= 1:
+            spreadsheet = self._client.open(config.GOOGLE_SHEET_NAME)
+            all_data = []
+            final_header = ["ID", "Ngày", "Giờ", "Người", "Danh mục", "Số tiền", "Mô tả"]
+            
+            # Determine which worksheets to read
+            target_worksheets = []
+            if start_date and end_date:
+                # Collect months between start and end
+                curr = start_date
+                while curr <= end_date:
+                    name = self._get_worksheet_name(curr)
+                    if name not in [ws.title for ws in target_worksheets]:
+                        try:
+                            target_worksheets.append(spreadsheet.worksheet(name))
+                        except: pass
+                    # Next month
+                    if curr.month == 12: curr = curr.replace(year=curr.year+1, month=1)
+                    else: curr = curr.replace(month=curr.month+1)
+            else:
+                # No specific range, try current month or all "Quản lý chi tiêu" sheets
+                try:
+                    target_worksheets.append(spreadsheet.worksheet(self._get_worksheet_name(datetime.now())))
+                except:
+                    # Fallback to all sheets starting with prefix
+                    for ws in spreadsheet.worksheets():
+                        if ws.title.startswith("Quản lý chi tiêu"):
+                            target_worksheets.append(ws)
+
+            if not target_worksheets:
                 return pd.DataFrame()
+
+            for ws in target_worksheets:
+                rows = ws.get_all_values()
+                if len(rows) > 1:
+                    raw_header = [str(h).strip() for h in rows[0]]
+                    df_temp = pd.DataFrame(rows[1:], columns=raw_header)
+                    all_data.append(df_temp)
+            
+            if not all_data:
+                return pd.DataFrame()
+                
+            df = pd.concat(all_data, ignore_index=True)
             
             # Normalize headers to NFC and lowercase for comparison
             def normalize_str(s):

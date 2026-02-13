@@ -352,11 +352,14 @@ class ExpenseManager:
         else:
             summary = {"Khác": df['Số tiền'].sum()}
             
-        total = sum(summary.values())
+        income = summary.get("Thu nhập", 0)
+        total_spent = sum(v for k, v in summary.items() if k != "Thu nhập")
         
         return {
             "categories": summary,
-            "total": int(total),
+            "total_spent": int(total_spent),
+            "income": int(income),
+            "net": int(income - total_spent),
             "month": month,
             "year": year,
             "person": person

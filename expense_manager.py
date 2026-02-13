@@ -50,6 +50,16 @@ class ExpenseManager:
             # Initialize headers if empty
             if not self._sheet.get_all_values():
                 self._sheet.append_row(["ID", "Ngày", "Giờ", "Người", "Danh mục", "Số tiền", "Mô tả", "Tháng", "Năm"])
+            
+            # Ensure there's a total formula in cells K1:L1 for quick viewing
+            try:
+                # Only update if it's not already set to avoid API call spam
+                current_total_label = self._sheet.acell('K1').value
+                if current_total_label != "TỔNG CHI TIÊU:":
+                    self._sheet.update_acell('K1', 'TỔNG CHI TIÊU:')
+                    self._sheet.update_acell('L1', '=SUM(F2:F)')
+            except Exception as e:
+                logger.warning(f"Could not update total formula cell: {e}")
                 
         except Exception as e:
             logger.error(f"Google Sheets Connection Error: {e}")
@@ -128,9 +138,16 @@ class ExpenseManager:
             desc_col = header_map.get("mô tả") or header_map.get("description") or next((h for h in raw_header if normalize_str(h) == "mô tả"), None)
             cat_col = header_map.get("danh mục") or header_map.get("category") or next((h for h in raw_header if normalize_str(h) == "danh mục"), None)
 
-            # If essential columns are not found, return empty DataFrame
+            # Fallback to absolute positions if names fail (ID=0, Date=1, Time=2, Person=3, Cat=4, Amount=5, Desc=6)
+            if not date_col and len(raw_header) > 1: date_col = raw_header[1]
+            if not amt_col and len(raw_header) > 5: amt_col = raw_header[5]
+            if not person_col and len(raw_header) > 3: person_col = raw_header[3]
+            if not desc_col and len(raw_header) > 6: desc_col = raw_header[6]
+            if not cat_col and len(raw_header) > 4: cat_col = raw_header[4]
+
+            # If essential columns are still not found (very unlikely now), return empty DataFrame
             if not date_col or not amt_col:
-                logger.warning("Essential columns (Ngày, Số tiền) not found in sheet.")
+                logger.warning("Essential columns (Ngày, Số tiền) not found even with fallback.")
                 return pd.DataFrame()
 
             df = pd.DataFrame(data, columns=raw_header)

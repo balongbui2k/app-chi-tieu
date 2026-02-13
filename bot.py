@@ -29,6 +29,13 @@ expense_mgr = ExpenseManager()
 # Track processed updates to prevent duplicates
 processed_updates = set()
 
+# Cache for today's transactions to be independent of Google Sheets reading issues
+# Logic: Simple, Telegram-only, resets daily
+today_cache = {
+    'date': None, # Format: YYYY-MM-DD
+    'items': []   # List of dicts: {'amount': int, 'desc': str}
+}
+
 def authorized_only(func):
     """Decorator to check if the user is authorized."""
     async def wrapper(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -111,7 +118,21 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
         # Add expense with Vietnam time
         now = datetime.now(vn_tz)
+        today_str = now.strftime("%Y-%m-%d")
+        
+        # Reset cache if day changed
+        if today_cache['date'] != today_str:
+            today_cache['date'] = today_str
+            today_cache['items'] = []
+
         record = expense_mgr.add_expense(amount, description, person=person, date=now)
+        
+        # Add to Telegram-only cache
+        today_cache['items'].append({'amount': amount, 'desc': description})
+        
+        # Calculate daily total from cache
+        daily_total = sum(item['amount'] for item in today_cache['items'])
+
         response = (
             f"✅ **Đã ghi nhận!**\n"
             f"━━━━━━━━━━━━━━━━━━━━\n"
@@ -119,6 +140,8 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             f"💰 Số tiền: {amount:,} {config.CURRENCY}\n"
             f"📂 Danh mục: {record['Danh mục']}\n"
             f"📝 Mô tả: {description}\n"
+            f"━━━━━━━━━━━━━━━━━━━━\n"
+            f"📊 **Tổng chi hôm nay: {daily_total:,} {config.CURRENCY}**\n"
             f"📅 ID: `{record['ID']}`"
         )
         await update.message.reply_text(response, parse_mode='Markdown')
@@ -128,32 +151,28 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 @authorized_only
 async def view_today(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """View today's expenses."""
+    """View today's expenses using the internal cache."""
     now = datetime.now(vn_tz)
     today_str = now.strftime("%Y-%m-%d")
     
-    # Passing string directly to ensure exact match
-    df = expense_mgr.get_expenses(start_date=today_str, end_date=today_str)
+    # Ensure cache is for today
+    if today_cache['date'] != today_str:
+        # If cache is old or empty, we try to load from sheet ONCE or just show empty
+        # But per user request "separate", we stick to cache
+        today_cache['date'] = today_str
+        today_cache['items'] = []
+
+    items = today_cache['items']
     
-    if df.empty:
-        # Check if it's really empty or filtering failed
-        all_df = expense_mgr.get_expenses()
-        debug_info = f" (Total records: {len(all_df)})"
-        if not all_df.empty and 'Ngày' in all_df.columns:
-            sample_dates = all_df['Ngày'].tail(3).tolist()
-            debug_info += f" | Sample dates in sheet: {sample_dates}"
-        
-        # Debug info to help identify why it's empty
-        debug_msg = f"📅 Hôm nay ({now.strftime('%d/%m/%Y')}) bạn chưa chi tiêu gì.\n\n"
-        debug_msg += f"_(Debug: Giờ hệ thống: {now.strftime('%H:%M')} | {debug_info})_"
-        await update.message.reply_text(debug_msg, parse_mode='Markdown')
+    if not items:
+        await update.message.reply_text(f"📅 Hôm nay ({now.strftime('%d/%m/%Y')}) bạn chưa chi tiêu gì.")
         return
         
-    total = df['Số tiền'].sum()
-    date_str = now.strftime("%d.%m.%Y")
+    total = sum(item['amount'] for item in items)
+    date_str = now.strftime("%d/%m/%Y")
     report = f"📅 **Chi tiêu hôm nay ({date_str}):**\n\n"
-    for _, row in df.iterrows():
-        report += f"• {row['Số tiền']:,} {config.CURRENCY} - {row['Mô tả']}\n"
+    for item in items:
+        report += f"• {item['amount']:,} đ - {item['desc']}\n"
     report += f"\n💰 **Tổng cộng: {total:,} {config.CURRENCY}**"
     await update.message.reply_text(report, parse_mode='Markdown')
 

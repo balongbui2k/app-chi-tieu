@@ -28,6 +28,7 @@ expense_mgr = ExpenseManager()
 
 # Track processed updates to prevent duplicates
 processed_updates = set()
+update_lock = asyncio.Lock()
 
 # Cache for today's transactions to be independent of Google Sheets reading issues
 # Logic: Simple, Telegram-only, resets daily
@@ -80,11 +81,12 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not update.message or not update.message.text:
         return
 
-    # Check for duplicate updates
-    if update.update_id in processed_updates:
-        logger.info(f"Ignored duplicate update: {update.update_id}")
-        return
-    processed_updates.add(update.update_id)
+    # Check for duplicate updates (thread-safe)
+    async with update_lock:
+        if update.update_id in processed_updates:
+            logger.info(f"Ignored duplicate update: {update.update_id}")
+            return
+        processed_updates.add(update.update_id)
     
     # Keep the set size manageable (keep last 500 IDs)
     if len(processed_updates) > 500:

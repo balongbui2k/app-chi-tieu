@@ -26,6 +26,9 @@ logger = logging.getLogger(__name__)
 
 expense_mgr = ExpenseManager()
 
+# Track processed updates to prevent duplicates
+processed_updates = set()
+
 def authorized_only(func):
     """Decorator to check if the user is authorized."""
     async def wrapper(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -68,6 +71,22 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 @authorized_only
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Process the user message for expense recording."""
+    if not update.message or not update.message.text:
+        return
+
+    # Check for duplicate updates
+    if update.update_id in processed_updates:
+        logger.info(f"Ignored duplicate update: {update.update_id}")
+        return
+    processed_updates.add(update.update_id)
+    
+    # Keep the set size manageable (keep last 500 IDs)
+    if len(processed_updates) > 500:
+        # Simple way to prune: convert to list, sort, keep newest
+        sorted_ids = sorted(list(processed_updates))
+        for old_id in sorted_ids[:-400]:
+            processed_updates.remove(old_id)
+
     text = update.message.text.strip()
     
     # Regex for "100k cơm" or "50 xăng" or "100k cơm @vợ"

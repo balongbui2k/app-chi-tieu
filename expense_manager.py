@@ -121,46 +121,60 @@ class ExpenseManager:
             header_map = {normalize_str(h): h for h in raw_header}
             
             # Find columns using normalized names
-            date_col = header_map.get("ngày") or next((h for h in raw_header if normalize_str(h) == "ngày"), "Ngày")
-            amt_col = header_map.get("số tiền") or next((h for h in raw_header if normalize_str(h) == "số tiền"), "Số tiền")
-            person_col = header_map.get("người") or next((h for h in raw_header if normalize_str(h) == "người"), "Người")
-            desc_col = header_map.get("mô tả") or next((h for h in raw_header if normalize_str(h) == "mô tả"), "Mô tả")
-            cat_col = header_map.get("danh mục") or next((h for h in raw_header if normalize_str(h) == "danh mục"), "Danh mục")
+            # Prioritize exact match, then fallback to common variations
+            date_col = header_map.get("ngày") or header_map.get("date") or next((h for h in raw_header if normalize_str(h) == "ngày"), None)
+            amt_col = header_map.get("số tiền") or header_map.get("amount") or next((h for h in raw_header if normalize_str(h) == "số tiền"), None)
+            person_col = header_map.get("người") or header_map.get("person") or next((h for h in raw_header if normalize_str(h) == "người"), None)
+            desc_col = header_map.get("mô tả") or header_map.get("description") or next((h for h in raw_header if normalize_str(h) == "mô tả"), None)
+            cat_col = header_map.get("danh mục") or header_map.get("category") or next((h for h in raw_header if normalize_str(h) == "danh mục"), None)
+
+            # If essential columns are not found, return empty DataFrame
+            if not date_col or not amt_col:
+                logger.warning("Essential columns (Ngày, Số tiền) not found in sheet.")
+                return pd.DataFrame()
 
             df = pd.DataFrame(data, columns=raw_header)
             
-            def standardize(d):
-                if not d or str(d).strip() == "": return "0000-00-00"
+            # Standardization for date column
+            def standardize_date(d):
+                if not d or str(d).strip() == "": return pd.NaT # Use NaT for missing/invalid dates
                 try:
-                    # Strip whitespace and normalize
                     d_str = str(d).strip()
-                    # Try parsing various formats. ISO first, then others.
-                    dt = pd.to_datetime(d_str, dayfirst=True, errors='coerce')
-                    if pd.isna(dt): 
-                        return d_str
-                    return dt.strftime("%Y-%m-%d")
+                    # Try to parse with multiple formats, prioritizing YYYY-MM-DD, then DD/MM/YYYY
+                    dt = pd.to_datetime(d_str, errors='coerce', format='%Y-%m-%d')
+                    if pd.isna(dt):
+                        dt = pd.to_datetime(d_str, errors='coerce', dayfirst=True) # For DD/MM/YYYY
+                    return dt
                 except:
-                    return str(d).strip()
+                    return pd.NaT
 
-            # Standardization
+            # Apply standardization to create a helper column for matching
             if date_col in df.columns:
-                df['__match_date'] = df[date_col].apply(standardize)
+                df['__match_date'] = df[date_col].apply(standardize_date)
             else:
-                # Fallback: if 'ngày' col not found by name, try index 1 (standard)
-                if df.shape[1] > 1:
-                    df['__match_date'] = df.iloc[:, 1].apply(standardize)
-                else:
-                    df['__match_date'] = "0000-00-00"
+                df['__match_date'] = pd.NaT # If date_col not found, all dates are invalid for filtering
 
-            # Filter logic
+            # Filter out rows with invalid dates
+            df = df.dropna(subset=['__match_date'])
+            
+            # Filter logic using ISO string comparison (bulletproof for YYYY-MM-DD)
             if start_date:
-                s_str = start_date.strftime("%Y-%m-%d") if isinstance(start_date, (date, datetime)) else str(start_date)[:10]
-                df = df[df['__match_date'] >= s_str]
-            if end_date:
-                e_str = end_date.strftime("%Y-%m-%d") if isinstance(end_date, (date, datetime)) else str(end_date)[:10]
-                df = df[df['__match_date'] <= e_str]
+                if isinstance(start_date, (date, datetime)):
+                    s_dt = pd.Timestamp(start_date.year, start_date.month, start_date.day)
+                else:
+                    s_dt = pd.to_datetime(start_date, errors='coerce', dayfirst=True)
+                if not pd.isna(s_dt):
+                    df = df[df['__match_date'] >= s_dt]
 
-            if person and person_col in df.columns:
+            if end_date:
+                if isinstance(end_date, (date, datetime)):
+                    e_dt = pd.Timestamp(end_date.year, end_date.month, end_date.day)
+                else:
+                    e_dt = pd.to_datetime(end_date, errors='coerce', dayfirst=True)
+                if not pd.isna(e_dt):
+                    df = df[df['__match_date'] <= e_dt]
+
+            if person and person_col and person_col in df.columns:
                 df = df[df[person_col].astype(str).str.strip().str.lower() == str(person).strip().lower()]
 
             # Clean amounts for numeric use
@@ -168,12 +182,16 @@ class ExpenseManager:
                 df['Số tiền'] = df[amt_col].astype(str).str.replace(r'[^\d]', '', regex=True)
                 df['Số tiền'] = pd.to_numeric(df['Số tiền'], errors='coerce').fillna(0).astype(int)
             else:
-                df['Số tiền'] = 0
+                df['Số tiền'] = 0 # Default to 0 if amount column is missing or invalid
 
             # Map important columns to standard names for the bot
-            if desc_col in df.columns: df['Mô tả'] = df[desc_col]
-            if date_col in df.columns: df['Ngày'] = df[date_col]
-            if cat_col in df.columns: df['Danh mục'] = df[cat_col]
+            # Ensure these columns exist, even if empty, for consistent output
+            df['Mô tả'] = df[desc_col] if desc_col and desc_col in df.columns else ''
+            df['Ngày'] = df[date_col] if date_col and date_col in df.columns else ''
+            df['Danh mục'] = df[cat_col] if cat_col and cat_col in df.columns else ''
+            
+            # Drop the temporary match date column
+            df = df.drop(columns=['__match_date'])
             
             return df
             
